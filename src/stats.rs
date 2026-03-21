@@ -27,20 +27,23 @@ pub struct Metrics {
     pub nr_shared_dispatches: u64,
     #[stat(desc = "Number of queue-delay-driven slice reductions")]
     pub nr_delay_scaled_dispatches: u64,
+    #[stat(desc = "Number of queue-delay-gradient slice reductions")]
+    pub nr_delay_gradient_dispatches: u64,
 }
 
 impl Metrics {
     fn format<W: Write>(&self, w: &mut W) -> Result<()> {
         writeln!(
             w,
-            "[{}] tasks -> r: {:>2}/{:<2} | dispatch -> k: {:<5} d: {:<5} s: {:<5} q: {:<5}",
+            "[{}] tasks -> r: {:>2}/{:<2} | dispatch -> k: {:<5} d: {:<5} s: {:<5} q: {:<5} g: {:<5}",
             crate::SCHEDULER_NAME,
             self.nr_running,
             self.nr_cpus,
             self.nr_kthread_dispatches,
             self.nr_direct_dispatches,
             self.nr_shared_dispatches,
-            self.nr_delay_scaled_dispatches
+            self.nr_delay_scaled_dispatches,
+            self.nr_delay_gradient_dispatches
         )?;
         Ok(())
     }
@@ -52,6 +55,8 @@ impl Metrics {
             nr_shared_dispatches: self.nr_shared_dispatches - rhs.nr_shared_dispatches,
             nr_delay_scaled_dispatches: self.nr_delay_scaled_dispatches
                 - rhs.nr_delay_scaled_dispatches,
+            nr_delay_gradient_dispatches: self.nr_delay_gradient_dispatches
+                - rhs.nr_delay_gradient_dispatches,
             ..self.clone()
         }
     }

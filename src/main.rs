@@ -722,6 +722,7 @@ impl<'a> Scheduler<'a> {
             nr_direct_dispatches: bss_data.nr_direct_dispatches,
             nr_shared_dispatches: bss_data.nr_shared_dispatches,
             nr_delay_scaled_dispatches: bss_data.nr_delay_scaled_dispatches,
+            nr_delay_gradient_dispatches: bss_data.nr_delay_gradient_dispatches,
         }
     }
 

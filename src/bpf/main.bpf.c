@@ -59,8 +59,8 @@ const volatile u64 slice_min;
 const volatile u64 slice_lag = 40ULL * NSEC_PER_MSEC;
 
 /*
- * TIMELY-inspired queue delay target used to gently reduce slice size when a
- * task's observed queue delay drifts above the target.
+ * TIMELY-inspired queue delay target used to shape slice size when a task's
+ * observed queue delay drifts above the target.
  */
 const volatile u64 timely_target_ns = 2ULL * NSEC_PER_MSEC;
 
@@ -121,7 +121,7 @@ const volatile u64 cpu_capacity[MAX_CPUS];
  * Scheduling statistics.
  */
 volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches,
-	     nr_delay_scaled_dispatches;
+	     nr_delay_scaled_dispatches, nr_delay_gradient_dispatches;
 
 /*
  * Amount of currently running tasks.
@@ -236,6 +236,7 @@ struct cpu_ctx *try_lookup_cpu_ctx(s32 cpu)
 struct task_ctx {
 	u64 awake_vtime;
 	u64 avg_queue_delay;
+	u64 prev_avg_queue_delay;
 	u64 last_enqueued_at;
 	u64 last_run_at;
 	u64 wakeup_freq;
@@ -736,16 +737,35 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	slice = MAX(slice, slice_min);
 
 	/*
-	 * Apply a small TIMELY-style reduction when the task's measured queue
-	 * delay is above the target. This reduces burst size under growing
-	 * scheduler delay without changing queue selection.
+	 * Apply a TIMELY-inspired reduction when queue delay is elevated.
+	 *
+	 * If delay is already above the target, scale against the configured
+	 * target. If delay is still below the target but is rising sharply above
+	 * a lower guard rail, scale earlier and more strongly to keep queue delay
+	 * from drifting upward unchecked.
 	 */
-	if (tctx && timely_target_ns && tctx->avg_queue_delay > timely_target_ns) {
-		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
-		u64 scaled = slice * timely_target_ns / tctx->avg_queue_delay;
+	if (tctx && timely_target_ns && tctx->avg_queue_delay) {
+		u64 low_target = MAX(timely_target_ns / 2, 1);
+		u64 gradient_margin = MAX(timely_target_ns / 8, 1);
+		bool rising = tctx->avg_queue_delay >
+			      tctx->prev_avg_queue_delay + gradient_margin;
+		u64 scale_target = 0;
 
-		slice = MAX(scaled, min_slice);
-		__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
+		if (tctx->avg_queue_delay > timely_target_ns) {
+			scale_target = timely_target_ns;
+			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
+		} else if (rising && tctx->avg_queue_delay > low_target) {
+			scale_target = low_target;
+			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
+			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
+		}
+
+		if (scale_target) {
+			u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
+			u64 scaled = slice * scale_target / tctx->avg_queue_delay;
+
+			slice = MAX(scaled, min_slice);
+		}
 	}
 
 	return slice;
@@ -1075,7 +1095,10 @@ void BPF_STRUCT_OPS(timely_running, struct task_struct *p)
 		u64 delay = tctx->last_run_at > tctx->last_enqueued_at
 				    ? tctx->last_run_at - tctx->last_enqueued_at
 				    : 1;
+		u64 prev_avg = tctx->avg_queue_delay;
+
 		tctx->avg_queue_delay = calc_avg(tctx->avg_queue_delay, delay);
+		tctx->prev_avg_queue_delay = prev_avg;
 		tctx->last_enqueued_at = 0;
 	}
 
