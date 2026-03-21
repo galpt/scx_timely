@@ -121,7 +121,8 @@ const volatile u64 cpu_capacity[MAX_CPUS];
  * Scheduling statistics.
  */
 volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches,
-	     nr_delay_scaled_dispatches, nr_delay_gradient_dispatches;
+	     nr_delay_scaled_dispatches, nr_delay_gradient_dispatches,
+	     nr_cpu_release_reenqueue;
 
 /*
  * Amount of currently running tasks.
@@ -1033,6 +1034,17 @@ void BPF_STRUCT_OPS(timely_dispatch, s32 cpu, struct task_struct *prev)
 }
 
 /*
+ * Rescue tasks which were already moved to the local DSQ when a higher-priority
+ * class temporarily takes the CPU away from sched_ext. This is a best-effort
+ * mitigation for RT pressure, not a complete cure for every watchdog case.
+ */
+void BPF_STRUCT_OPS(timely_cpu_release, s32 cpu, struct scx_cpu_release_args *args)
+{
+	scx_bpf_reenqueue_local();
+	__sync_fetch_and_add(&nr_cpu_release_reenqueue, 1);
+}
+
+/*
  * Update CPU load and scale target performance level accordingly.
  */
 static void update_cpu_load(struct task_struct *p, struct task_ctx *tctx)
@@ -1438,6 +1450,7 @@ SCX_OPS_DEFINE(timely_ops,
 	       .select_cpu		= (void *)timely_select_cpu,
 	       .enqueue			= (void *)timely_enqueue,
 	       .dispatch		= (void *)timely_dispatch,
+	       .cpu_release		= (void *)timely_cpu_release,
 	       .running			= (void *)timely_running,
 	       .stopping		= (void *)timely_stopping,
 	       .runnable		= (void *)timely_runnable,

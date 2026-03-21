@@ -29,13 +29,15 @@ pub struct Metrics {
     pub nr_delay_scaled_dispatches: u64,
     #[stat(desc = "Number of queue-delay-gradient slice reductions")]
     pub nr_delay_gradient_dispatches: u64,
+    #[stat(desc = "Number of local-DSQ rescues triggered from cpu_release")]
+    pub nr_cpu_release_reenqueue: u64,
 }
 
 impl Metrics {
     fn format<W: Write>(&self, w: &mut W) -> Result<()> {
         writeln!(
             w,
-            "[{}] tasks -> r: {:>2}/{:<2} | dispatch -> k: {:<5} d: {:<5} s: {:<5} q: {:<5} g: {:<5}",
+            "[{}] tasks -> r: {:>2}/{:<2} | dispatch -> k: {:<5} d: {:<5} s: {:<5} q: {:<5} g: {:<5} rel: {:<5}",
             crate::SCHEDULER_NAME,
             self.nr_running,
             self.nr_cpus,
@@ -43,7 +45,8 @@ impl Metrics {
             self.nr_direct_dispatches,
             self.nr_shared_dispatches,
             self.nr_delay_scaled_dispatches,
-            self.nr_delay_gradient_dispatches
+            self.nr_delay_gradient_dispatches,
+            self.nr_cpu_release_reenqueue
         )?;
         Ok(())
     }
@@ -57,6 +60,7 @@ impl Metrics {
                 - rhs.nr_delay_scaled_dispatches,
             nr_delay_gradient_dispatches: self.nr_delay_gradient_dispatches
                 - rhs.nr_delay_gradient_dispatches,
+            nr_cpu_release_reenqueue: self.nr_cpu_release_reenqueue - rhs.nr_cpu_release_reenqueue,
             ..self.clone()
         }
     }

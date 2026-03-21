@@ -723,6 +723,7 @@ impl<'a> Scheduler<'a> {
             nr_shared_dispatches: bss_data.nr_shared_dispatches,
             nr_delay_scaled_dispatches: bss_data.nr_delay_scaled_dispatches,
             nr_delay_gradient_dispatches: bss_data.nr_delay_gradient_dispatches,
+            nr_cpu_release_reenqueue: bss_data.nr_cpu_release_reenqueue,
         }
     }
 

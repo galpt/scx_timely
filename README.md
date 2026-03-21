@@ -10,6 +10,7 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 - scheduling behavior is still intentionally close to upstream `scx_bpfland`
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
 - a small TIMELY-inspired control layer now measures queue delay and trims slice size when delay is high or climbing quickly above a lower guard rail
+- a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 
 ## Design Direction
 
