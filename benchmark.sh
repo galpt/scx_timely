@@ -789,6 +789,14 @@ detect_scheduler_status() {
         if grep -q 'Error: EXIT:' "$runtime_log"; then
             status="exited"
             issue=$(sed -n 's/^Error: EXIT: //p' "$runtime_log" | head -n 1)
+        elif grep -q 'BPF scheduler exited' "$runtime_log"; then
+            status="exited"
+            issue=$(
+                sed -n \
+                    -e 's/.*EXIT: \(.*\))$/\1/p' \
+                    -e 's/.*BPF scheduler exited[: ]*//p' \
+                    "$runtime_log" | head -n 1
+            )
         elif grep -q 'triggered exit kind' "$runtime_log"; then
             status="exited"
             issue=$(sed -n '/triggered exit kind/{n;p;}' "$runtime_log" | sed 's/^  *//' | head -n 1)
