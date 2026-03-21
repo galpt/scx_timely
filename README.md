@@ -11,6 +11,7 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
 - a small TIMELY-inspired control layer now measures queue delay and trims slice size when delay is high or climbing quickly above a lower guard rail
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
+- recent local `cachyos` benchmark runs still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
 
 ## Design Direction
 
@@ -67,14 +68,15 @@ Useful helper commands:
 > - both suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
+> - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls or `cpu_release()` rescue path actually fired
 > - generated charts and CSV summaries are written under `benchmark-results/`
 > - this is local-machine benchmarking, not a universal scheduler claim
 
 ## Important Notes
 
 > [!IMPORTANT]
-> - this repository is at the bootstrap stage
-> - the current code should be read as a clean starting base, not as a complete TIMELY implementation
+> - this repository is still in an experimental stage
+> - the current code should be read as a measured `bpfland`-based starting point with a growing TIMELY-inspired control layer, not as a complete TIMELY implementation
 > - future README claims should stay tied to measured behavior and local validation
 > - the install path is intentionally source-first for now; release-download automation can come later after the scheduler behavior settles
 

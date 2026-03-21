@@ -746,8 +746,9 @@ tag_log_copy() {
     local scheduler_status="$6"
     local scheduler_issue="$7"
     local scheduler_version="$8"
+    local scheduler_metrics="$9"
 
-    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" "$scheduler_version" <<'PY'
+    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" "$scheduler_version" "$scheduler_metrics" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -760,6 +761,7 @@ power_profile = sys.argv[5]
 scheduler_status = sys.argv[6]
 scheduler_issue = sys.argv[7]
 scheduler_version = sys.argv[8]
+scheduler_metrics = sys.argv[9]
 text = source.read_text(encoding="utf-8", errors="replace")
 match = re.search(r"Kernel:\s+(\S+)", text)
 if not match:
@@ -775,6 +777,7 @@ text += (
     f"Scheduler version: {scheduler_version}\n"
     f"Scheduler status: {scheduler_status}\n"
     f"Scheduler issue: {scheduler_issue}\n"
+    f"Scheduler metrics: {scheduler_metrics}\n"
 )
 target.write_text(text, encoding="utf-8")
 PY
@@ -806,6 +809,17 @@ detect_scheduler_status() {
     printf '%s\n%s\n' "$status" "$issue"
 }
 
+detect_scheduler_metrics() {
+    local runtime_log="$1"
+    local metrics=""
+
+    if [ -n "$runtime_log" ] && [ -f "$runtime_log" ]; then
+        metrics=$(sed -n 's/^.*Scheduler metrics .*: //p' "$runtime_log" | tail -n 1)
+    fi
+
+    printf '%s\n' "$metrics"
+}
+
 run_one_benchmark() {
     local variant_slug="$1"
     local label="$2"
@@ -817,6 +831,7 @@ run_one_benchmark() {
     local tagged_log
     local scheduler_status
     local scheduler_issue
+    local scheduler_metrics
     local detected_status
 
     run_name="${variant_slug}_run$(printf '%02d' "$run_index")"
@@ -844,11 +859,12 @@ run_one_benchmark() {
         detected_status=$(detect_scheduler_status "$runtime_log")
         scheduler_status=$(printf '%s\n' "$detected_status" | sed -n '1p')
         scheduler_issue=$(printf '%s\n' "$detected_status" | sed -n '2p')
+        scheduler_metrics=$(detect_scheduler_metrics "$runtime_log")
         if [ "$scheduler_status" != "clean" ]; then
             warn "${label} scheduler status: ${scheduler_status} (${scheduler_issue})"
         fi
     fi
-    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION"
+    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION" "$scheduler_metrics"
     ok "Saved $(basename "$raw_log")"
 }
 

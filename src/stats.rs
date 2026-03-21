@@ -34,6 +34,20 @@ pub struct Metrics {
 }
 
 impl Metrics {
+    pub fn summary_line(&self) -> String {
+        format!(
+            "tasks r={}/{} dispatch k={} d={} s={} q={} g={} rel={}",
+            self.nr_running,
+            self.nr_cpus,
+            self.nr_kthread_dispatches,
+            self.nr_direct_dispatches,
+            self.nr_shared_dispatches,
+            self.nr_delay_scaled_dispatches,
+            self.nr_delay_gradient_dispatches,
+            self.nr_cpu_release_reenqueue
+        )
+    }
+
     fn format<W: Write>(&self, w: &mut W) -> Result<()> {
         writeln!(
             w,

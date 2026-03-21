@@ -731,6 +731,11 @@ impl<'a> Scheduler<'a> {
         uei_exited!(&self.skel, uei)
     }
 
+    fn log_metrics_snapshot(&self, prefix: &str) {
+        let metrics = self.get_metrics();
+        info!("{prefix}: {}", metrics.summary_line());
+    }
+
     fn run(&mut self, shutdown: Arc<AtomicBool>) -> Result<UserExitInfo> {
         let (res_ch, req_ch) = self.stats_server.channels();
         while !shutdown.load(Ordering::Relaxed) && !self.exited() {
@@ -743,6 +748,14 @@ impl<'a> Scheduler<'a> {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(e) => Err(e)?,
             }
+        }
+
+        if shutdown.load(Ordering::Relaxed) {
+            self.log_metrics_snapshot("Scheduler metrics at shutdown request");
+        } else if self.exited() {
+            self.log_metrics_snapshot("Scheduler metrics before exit report");
+        } else if self.user_restart {
+            self.log_metrics_snapshot("Scheduler metrics before user-requested restart");
         }
 
         let _ = self.struct_ops.take();
