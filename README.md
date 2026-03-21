@@ -40,6 +40,26 @@ To remove it again:
 sudo sh uninstall.sh --purge --force
 ```
 
+## Benchmark Helpers
+
+For quick local baseline-vs-`scx_timely` comparisons, this repo also ships a small Mini Benchmarker wrapper:
+
+```bash
+./mini_benchmarker.sh --mode desktop
+```
+
+Useful helper commands:
+
+- `./mini_benchmarker.sh --check-deps`
+- `./install_benchmark_deps.sh --mini-benchmarker --plotter`
+- `./install_benchmark_deps.sh --remove-workdir`
+
+> [!IMPORTANT]
+> - all reported Mini Benchmarker values are elapsed time in seconds, so lower is better
+> - the helper compares your baseline kernel scheduler against `scx_timely` in the selected mode
+> - generated charts and CSV summaries are written under `benchmark-results/`
+> - this is local-machine benchmarking, not a universal scheduler claim
+
 ## Important Notes
 
 > [!IMPORTANT]
