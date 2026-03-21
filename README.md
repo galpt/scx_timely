@@ -65,7 +65,7 @@ Useful helper commands:
 > - all reported benchmark values are elapsed time in seconds, so lower is better
 > - both suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
-> - scheduler exits are now recorded in tagged logs, CSV output, and chart labels so a completed benchmark does not get mistaken for a clean scheduler run
+> - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
 > - generated charts and CSV summaries are written under `benchmark-results/`
 > - this is local-machine benchmarking, not a universal scheduler claim
 

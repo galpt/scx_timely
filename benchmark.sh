@@ -42,6 +42,7 @@ BASELINE_LABEL=""
 POWER_PROFILE="unknown"
 BENCHMARK_LABEL="Mini Benchmarker"
 CURRENT_RUNTIME_LOG=""
+CURRENT_SCHEDULER_VERSION=""
 
 usage() {
     cat <<EOF
@@ -229,6 +230,26 @@ detect_power_profile() {
     if [ -n "$profile" ]; then
         POWER_PROFILE="$profile"
     fi
+}
+
+detect_binary_version() {
+    local bin="$1"
+    local version_line=""
+
+    version_line=$("$bin" --version 2>/dev/null | head -n 1 || true)
+    if [ -z "$version_line" ]; then
+        printf '%s\n' ""
+        return
+    fi
+
+    case "$version_line" in
+        *" "*)
+            printf '%s\n' "${version_line#* }"
+            ;;
+        *)
+            printf '%s\n' "$version_line"
+            ;;
+    esac
 }
 
 warn_if_running_as_root() {
@@ -672,8 +693,9 @@ tag_log_copy() {
     local power_profile="$5"
     local scheduler_status="$6"
     local scheduler_issue="$7"
+    local scheduler_version="$8"
 
-    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" <<'PY'
+    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" "$scheduler_version" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -685,6 +707,7 @@ variant = sys.argv[4]
 power_profile = sys.argv[5]
 scheduler_status = sys.argv[6]
 scheduler_issue = sys.argv[7]
+scheduler_version = sys.argv[8]
 text = source.read_text(encoding="utf-8", errors="replace")
 match = re.search(r"Kernel:\s+(\S+)", text)
 if not match:
@@ -697,6 +720,7 @@ text += (
     f"Original kernel: {kernel}\n"
     f"Benchmark variant: {variant}\n"
     f"Power profile: {power_profile}\n"
+    f"Scheduler version: {scheduler_version}\n"
     f"Scheduler status: {scheduler_status}\n"
     f"Scheduler issue: {scheduler_issue}\n"
 )
@@ -764,7 +788,7 @@ run_one_benchmark() {
             warn "${label} scheduler status: ${scheduler_status} (${scheduler_issue})"
         fi
     fi
-    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue"
+    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION"
     ok "Saved $(basename "$raw_log")"
 }
 
@@ -778,17 +802,21 @@ run_variant() {
         baseline)
             stop_all_schedulers
             CURRENT_RUNTIME_LOG=""
+            CURRENT_SCHEDULER_VERSION=""
             ;;
         cake)
             stop_all_schedulers
+            CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$CAKE_BIN")
             start_cake_manual
             ;;
         bpfland)
             stop_all_schedulers
+            CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$BPFLAND_BIN")
             start_bpfland_manual
             ;;
         timely)
             stop_all_schedulers
+            CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$TIMELY_BIN")
             start_timely_manual
             ;;
         *)

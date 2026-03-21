@@ -38,11 +38,12 @@ TEST_PATTERN = re.compile(
 KERNEL_PATTERN = re.compile(r"Kernel:\s+(\S+)")
 LABEL_PATTERN = re.compile(r"Benchmark label:\s+(.+)")
 POWER_PROFILE_PATTERN = re.compile(r"Power profile:\s+(.+)")
+SCHEDULER_VERSION_PATTERN = re.compile(r"Scheduler version:\s+(.+)")
 SCHEDULER_STATUS_PATTERN = re.compile(r"Scheduler status:\s+(.+)")
 SCHEDULER_ISSUE_PATTERN = re.compile(r"Scheduler issue:\s+(.+)")
 
 
-def parse_log(path: Path) -> tuple[str, str | None, str, str | None, dict[str, float]]:
+def parse_log(path: Path) -> tuple[str, str | None, str | None, str, str | None, dict[str, float]]:
     text = path.read_text(encoding="utf-8", errors="replace")
     label_match = LABEL_PATTERN.search(text)
     if label_match:
@@ -59,6 +60,13 @@ def parse_log(path: Path) -> tuple[str, str | None, str, str | None, dict[str, f
         parsed = power_profile_match.group(1).strip()
         if parsed and parsed.lower() != "unknown":
             power_profile = parsed
+
+    scheduler_version_match = SCHEDULER_VERSION_PATTERN.search(text)
+    scheduler_version = None
+    if scheduler_version_match:
+        parsed = scheduler_version_match.group(1).strip()
+        if parsed:
+            scheduler_version = parsed
 
     scheduler_status_match = SCHEDULER_STATUS_PATTERN.search(text)
     scheduler_status = "unknown"
@@ -82,7 +90,7 @@ def parse_log(path: Path) -> tuple[str, str | None, str, str | None, dict[str, f
     if missing:
         raise ValueError(f"{path} is missing benchmark values: {', '.join(missing)}")
 
-    return label, power_profile, scheduler_status, scheduler_issue, values
+    return label, power_profile, scheduler_version, scheduler_status, scheduler_issue, values
 
 
 def aggregate_logs(log_dir: Path) -> tuple[
@@ -90,21 +98,24 @@ def aggregate_logs(log_dir: Path) -> tuple[
     dict[str, dict[str, float]],
     dict[str, int],
     dict[str, str | None],
+    dict[str, str | None],
     dict[str, str],
     dict[str, str | None],
 ]:
     grouped: dict[str, dict[str, list[float]]] = {}
     run_counts: dict[str, int] = {}
     power_profiles: dict[str, str | None] = {}
+    scheduler_versions: dict[str, str | None] = {}
     scheduler_statuses: dict[str, str] = {}
     scheduler_issues: dict[str, str | None] = {}
 
     for path in sorted(log_dir.glob("*.log")):
-        label, power_profile, scheduler_status, scheduler_issue, values = parse_log(path)
+        label, power_profile, scheduler_version, scheduler_status, scheduler_issue, values = parse_log(path)
         if label not in grouped:
             grouped[label] = {name: [] for name in TEST_ORDER}
             run_counts[label] = 0
             power_profiles[label] = power_profile
+            scheduler_versions[label] = scheduler_version
             scheduler_statuses[label] = scheduler_status
             scheduler_issues[label] = scheduler_issue
         run_counts[label] += 1
@@ -122,7 +133,7 @@ def aggregate_logs(log_dir: Path) -> tuple[
         }
         for label in labels
     }
-    return labels, averages, run_counts, power_profiles, scheduler_statuses, scheduler_issues
+    return labels, averages, run_counts, power_profiles, scheduler_versions, scheduler_statuses, scheduler_issues
 
 
 def write_csv(
@@ -131,18 +142,20 @@ def write_csv(
     averages: dict[str, dict[str, float]],
     run_counts: dict[str, int],
     power_profiles: dict[str, str | None],
+    scheduler_versions: dict[str, str | None],
     scheduler_statuses: dict[str, str],
     scheduler_issues: dict[str, str | None],
 ) -> None:
     csv_path = out_dir / "mini_benchmarker_summary.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["label", "power_profile", "scheduler_status", "scheduler_issue", "runs", "benchmark", "mean_seconds"])
+        writer.writerow(["label", "power_profile", "scheduler_version", "scheduler_status", "scheduler_issue", "runs", "benchmark", "mean_seconds"])
         for label in labels:
             for test_name in TEST_ORDER:
                 writer.writerow([
                     label,
                     power_profiles[label] or "",
+                    scheduler_versions[label] or "",
                     scheduler_statuses[label],
                     scheduler_issues[label] or "",
                     run_counts[label],
@@ -151,7 +164,9 @@ def write_csv(
                 ])
 
 
-def display_label(label: str, power_profile: str | None, scheduler_status: str) -> str:
+def display_label(label: str, power_profile: str | None, scheduler_version: str | None, scheduler_status: str) -> str:
+    if scheduler_version:
+        label = f"{label} [ver: {scheduler_version}]"
     if scheduler_status != "clean":
         label = f"{label} [status: {scheduler_status}]"
     if power_profile:
@@ -164,6 +179,7 @@ def render_chart(
     labels: list[str],
     averages: dict[str, dict[str, float]],
     power_profiles: dict[str, str | None],
+    scheduler_versions: dict[str, str | None],
     scheduler_statuses: dict[str, str],
     title: str,
 ) -> None:
@@ -183,7 +199,7 @@ def render_chart(
             ys,
             values,
             height=bar_height,
-            label=display_label(label, power_profiles[label], scheduler_statuses[label]),
+            label=display_label(label, power_profiles[label], scheduler_versions[label], scheduler_statuses[label]),
         )
         for bar, value in zip(bars, values):
             ax.text(
@@ -220,9 +236,9 @@ def main() -> int:
     args = parser.parse_args()
 
     log_dir = args.log_dir.resolve()
-    labels, averages, run_counts, power_profiles, scheduler_statuses, scheduler_issues = aggregate_logs(log_dir)
-    write_csv(log_dir, labels, averages, run_counts, power_profiles, scheduler_statuses, scheduler_issues)
-    render_chart(log_dir, labels, averages, power_profiles, scheduler_statuses, args.title)
+    labels, averages, run_counts, power_profiles, scheduler_versions, scheduler_statuses, scheduler_issues = aggregate_logs(log_dir)
+    write_csv(log_dir, labels, averages, run_counts, power_profiles, scheduler_versions, scheduler_statuses, scheduler_issues)
+    render_chart(log_dir, labels, averages, power_profiles, scheduler_versions, scheduler_statuses, args.title)
     print(f"Wrote chart and CSV summary to {log_dir}")
     return 0
 
