@@ -40,7 +40,7 @@ SUDO_KEEPALIVE_PID=""
 BASELINE_LABEL=""
 POWER_PROFILE="unknown"
 BENCHMARK_LABEL="Mini Benchmarker"
-VARIANT_LABEL_PREFIX="Timely"
+CURRENT_RUNTIME_LOG=""
 
 usage() {
     cat <<EOF
@@ -590,6 +590,7 @@ stop_all_schedulers() {
 start_bpfland_manual() {
     local runtime_log="$RESULTS_DIR/console/scx_bpfland.log"
     say "Starting scx_bpfland"
+    CURRENT_RUNTIME_LOG="$runtime_log"
     run_privileged env RUST_LOG=info "$BPFLAND_BIN" >"$runtime_log" 2>&1 &
     wait_for_scheduler_state bpfland active || {
         err "scx_bpfland did not become active."
@@ -600,6 +601,7 @@ start_bpfland_manual() {
 start_timely_manual() {
     local runtime_log="$RESULTS_DIR/console/scx_timely-${MODE}.log"
     say "Starting scx_timely in ${MODE} mode"
+    CURRENT_RUNTIME_LOG="$runtime_log"
     run_privileged env RUST_LOG=info "$TIMELY_BIN" --mode "$MODE" >"$runtime_log" 2>&1 &
     wait_for_scheduler_state timely active || {
         err "scx_timely did not become active."
@@ -633,8 +635,10 @@ tag_log_copy() {
     local label="$3"
     local variant_slug="$4"
     local power_profile="$5"
+    local scheduler_status="$6"
+    local scheduler_issue="$7"
 
-    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" <<'PY'
+    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -644,6 +648,8 @@ target = Path(sys.argv[2])
 label = sys.argv[3]
 variant = sys.argv[4]
 power_profile = sys.argv[5]
+scheduler_status = sys.argv[6]
+scheduler_issue = sys.argv[7]
 text = source.read_text(encoding="utf-8", errors="replace")
 match = re.search(r"Kernel:\s+(\S+)", text)
 if not match:
@@ -656,19 +662,43 @@ text += (
     f"Original kernel: {kernel}\n"
     f"Benchmark variant: {variant}\n"
     f"Power profile: {power_profile}\n"
+    f"Scheduler status: {scheduler_status}\n"
+    f"Scheduler issue: {scheduler_issue}\n"
 )
 target.write_text(text, encoding="utf-8")
 PY
+}
+
+detect_scheduler_status() {
+    local runtime_log="$1"
+    local status="clean"
+    local issue=""
+
+    if [ -n "$runtime_log" ] && [ -f "$runtime_log" ]; then
+        if grep -q 'Error: EXIT:' "$runtime_log"; then
+            status="exited"
+            issue=$(sed -n 's/^Error: EXIT: //p' "$runtime_log" | head -n 1)
+        elif grep -q 'triggered exit kind' "$runtime_log"; then
+            status="exited"
+            issue=$(sed -n '/triggered exit kind/{n;p;}' "$runtime_log" | sed 's/^  *//' | head -n 1)
+        fi
+    fi
+
+    printf '%s\n%s\n' "$status" "$issue"
 }
 
 run_one_benchmark() {
     local variant_slug="$1"
     local label="$2"
     local run_index="$3"
+    local runtime_log="${4:-}"
     local run_name
     local cache_answer
     local raw_log
     local tagged_log
+    local scheduler_status
+    local scheduler_issue
+    local detected_status
 
     run_name="${variant_slug}_run$(printf '%02d' "$run_index")"
     cache_answer="n"
@@ -689,7 +719,17 @@ run_one_benchmark() {
 
     cp "$raw_log" "$RESULTS_DIR/raw/"
     tagged_log="$RESULTS_DIR/tagged/$(basename "$raw_log")"
-    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE"
+    scheduler_status="clean"
+    scheduler_issue=""
+    if [ -n "$runtime_log" ]; then
+        detected_status=$(detect_scheduler_status "$runtime_log")
+        scheduler_status=$(printf '%s\n' "$detected_status" | sed -n '1p')
+        scheduler_issue=$(printf '%s\n' "$detected_status" | sed -n '2p')
+        if [ "$scheduler_status" != "clean" ]; then
+            warn "${label} scheduler status: ${scheduler_status} (${scheduler_issue})"
+        fi
+    fi
+    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue"
     ok "Saved $(basename "$raw_log")"
 }
 
@@ -702,6 +742,7 @@ run_variant() {
     case "$action" in
         baseline)
             stop_all_schedulers
+            CURRENT_RUNTIME_LOG=""
             ;;
         bpfland)
             stop_all_schedulers
@@ -718,7 +759,7 @@ run_variant() {
     esac
 
     for run_index in $(seq 1 "$RUNS"); do
-        run_one_benchmark "$variant_slug" "$label" "$run_index"
+        run_one_benchmark "$variant_slug" "$label" "$run_index" "$CURRENT_RUNTIME_LOG"
     done
 }
 
