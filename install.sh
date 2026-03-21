@@ -27,6 +27,7 @@ BUILD_FROM_SOURCE="1"
 DRY_RUN=""
 FORCE=""
 SCX_FLAGS="${SCX_FLAGS:-$DEFAULT_SCX_FLAGS}"
+BUILD_MIRROR_DIR=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -59,6 +60,12 @@ run() {
         printf "${YELLOW}[DRY ]${NC}  %s\n" "$*"
     else
         eval "$@"
+    fi
+}
+
+cleanup_build_mirror() {
+    if [ -n "${BUILD_MIRROR_DIR}" ] && [ -d "${BUILD_MIRROR_DIR}" ]; then
+        rm -rf "${BUILD_MIRROR_DIR}"
     fi
 }
 
@@ -130,6 +137,7 @@ check_sched_ext_support() {
 build_from_source() {
     _distro="$1"
     _src=$(cd "$(dirname "$0")"; pwd)
+    _build_src="$_src"
 
     case "$_distro" in
         cachyos|arch)  install_deps_arch ;;
@@ -140,11 +148,24 @@ build_from_source() {
     install_rust_if_missing
     export PATH="${HOME}/.cargo/bin:${PATH}"
 
-    run "cargo build --release --manifest-path \"${_src}/Cargo.toml\""
+    if printf '%s' "$_src" | grep -q ' '; then
+        BUILD_MIRROR_DIR=$(mktemp -d /tmp/scx_timely-build.XXXXXX)
+        log_info "Source path contains spaces; building from temporary mirror ${BUILD_MIRROR_DIR}"
+        (
+            cd "$_src"
+            tar --exclude='./.git' --exclude='./target' --exclude='./benchmark-results' -cf - .
+        ) | (
+            cd "$BUILD_MIRROR_DIR"
+            tar -xf -
+        )
+        _build_src="$BUILD_MIRROR_DIR"
+    fi
 
-    _target_dir=$(cargo metadata --format-version 1 --no-deps --manifest-path "${_src}/Cargo.toml" \
+    run "cargo build --release --manifest-path \"${_build_src}/Cargo.toml\""
+
+    _target_dir=$(cargo metadata --format-version 1 --no-deps --manifest-path "${_build_src}/Cargo.toml" \
         | sed -n 's/.*\"target_directory\":\"\([^\"]*\)\".*/\1/p')
-    [ -n "$_target_dir" ] || _target_dir="${_src}/target"
+    [ -n "$_target_dir" ] || _target_dir="${_build_src}/target"
 
     if [ ! -f "${_target_dir}/release/${BINARY_NAME}" ]; then
         log_error "Built binary not found at ${_target_dir}/release/${BINARY_NAME}"
@@ -228,6 +249,7 @@ enable_scx_service() {
 main() {
     log_step "scx_timely installer"
     check_root
+    trap cleanup_build_mirror EXIT HUP INT TERM
 
     _distro=$(detect_distro)
     log_info "Distribution : ${_distro}"
