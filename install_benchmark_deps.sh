@@ -16,16 +16,25 @@ warn() { printf "${BLD}${YLW}[ WARN ]${RST} %s\n" "$1"; }
 err()  { printf "${BLD}${RED}[ERROR ]${RST} %s\n" "$1" >&2; }
 
 INSTALL_MINI=0
+INSTALL_CACHYOS=0
 INSTALL_PLOTTER=0
 REMOVE_MINI=0
+REMOVE_CACHYOS=0
 REMOVE_PLOTTER=0
 REMOVE_WORKDIR=0
 REMOVE_RESULTS=0
+
 MINI_LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/scx_timely/mini-benchmarker"
 MINI_LOCAL_SCRIPT="$MINI_LOCAL_DIR/mini-benchmarker.sh"
 MINI_SOURCE_URL="https://gitlab.com/torvic9/mini-benchmarker/-/raw/master/mini-benchmarker.sh"
+
+CACHYOS_LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/scx_timely/cachyos-benchmarker"
+CACHYOS_LOCAL_SCRIPT="$CACHYOS_LOCAL_DIR/cachyos-benchmarker"
+CACHYOS_SOURCE_URL="https://raw.githubusercontent.com/CachyOS/cachyos-benchmarker/master/cachyos-benchmarker"
+
 PLOTTER_VENV_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/mini-benchmarker-venv"
 MINI_WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/mini-benchmarker-workdir"
+CACHYOS_WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/cachyos-benchmarker-workdir"
 RESULTS_ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/benchmark-results"
 
 usage() {
@@ -35,15 +44,18 @@ Usage: ./install_benchmark_deps.sh [options]
 Best-effort bootstrap for benchmark helper dependencies.
 
 Options:
-  --mini-benchmarker   Try to install Mini Benchmarker when a supported path exists
-  --plotter            Install Python matplotlib dependencies for chart rendering
+  --mini-benchmarker     Fetch torvic9's Mini Benchmarker locally
+  --cachyos-benchmarker  Fetch CachyOS's benchmark script locally
+  --plotter              Install Python matplotlib dependencies for chart rendering
   --remove-mini-benchmarker
-                       Remove the fetched local Mini Benchmarker script
-  --remove-plotter     Remove the local matplotlib virtualenv
-  --remove-workdir     Remove the Mini Benchmarker asset/work directory
-  --remove-results     Remove generated mini-benchmarker result directories
-  --remove-all         Remove all benchmark helper leftovers above
-  -h, --help           Show this help
+                         Remove the fetched local Mini Benchmarker script
+  --remove-cachyos-benchmarker
+                         Remove the fetched local CachyOS benchmark script
+  --remove-plotter       Remove the local matplotlib virtualenv
+  --remove-workdir       Remove cached benchmark asset/work directories
+  --remove-results       Remove generated benchmark result directories
+  --remove-all           Remove all benchmark helper leftovers above
+  -h, --help             Show this help
 EOF
 }
 
@@ -53,12 +65,20 @@ while [ $# -gt 0 ]; do
             INSTALL_MINI=1
             shift
             ;;
+        --cachyos-benchmarker)
+            INSTALL_CACHYOS=1
+            shift
+            ;;
         --plotter)
             INSTALL_PLOTTER=1
             shift
             ;;
         --remove-mini-benchmarker)
             REMOVE_MINI=1
+            shift
+            ;;
+        --remove-cachyos-benchmarker)
+            REMOVE_CACHYOS=1
             shift
             ;;
         --remove-plotter)
@@ -75,6 +95,7 @@ while [ $# -gt 0 ]; do
             ;;
         --remove-all)
             REMOVE_MINI=1
+            REMOVE_CACHYOS=1
             REMOVE_PLOTTER=1
             REMOVE_WORKDIR=1
             REMOVE_RESULTS=1
@@ -92,8 +113,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ "$INSTALL_MINI" -eq 0 ] && [ "$INSTALL_PLOTTER" -eq 0 ] && \
-   [ "$REMOVE_MINI" -eq 0 ] && [ "$REMOVE_PLOTTER" -eq 0 ] && \
+if [ "$INSTALL_MINI" -eq 0 ] && [ "$INSTALL_CACHYOS" -eq 0 ] && [ "$INSTALL_PLOTTER" -eq 0 ] && \
+   [ "$REMOVE_MINI" -eq 0 ] && [ "$REMOVE_CACHYOS" -eq 0 ] && [ "$REMOVE_PLOTTER" -eq 0 ] && \
    [ "$REMOVE_WORKDIR" -eq 0 ] && [ "$REMOVE_RESULTS" -eq 0 ]; then
     usage
     exit 0
@@ -129,14 +150,12 @@ install_plotter() {
     ok "Plotter environment ready at $PLOTTER_VENV_DIR"
 }
 
-patch_mini_benchmarker_script() {
+patch_mini_script() {
     [ -f "$MINI_LOCAL_SCRIPT" ] || return 0
-
     if grep -q 'MB_TIME_BIN=' "$MINI_LOCAL_SCRIPT"; then
         ok "Mini Benchmarker compatibility patch already present"
         return 0
     fi
-
     say "Patching Mini Benchmarker for portable GNU time lookup"
     sed -i '/^TMP="\/tmp"$/a\
 MB_TIME_BIN=""\
@@ -152,38 +171,58 @@ done\
     ok "Applied local compatibility patch to $MINI_LOCAL_SCRIPT"
 }
 
-fetch_mini_benchmarker_script() {
-    mkdir -p "$MINI_LOCAL_DIR"
-    if command -v curl >/dev/null 2>&1; then
-        say "Fetching Mini Benchmarker from $MINI_SOURCE_URL"
-        curl -L --fail --silent --show-error "$MINI_SOURCE_URL" -o "$MINI_LOCAL_SCRIPT"
-    elif command -v wget >/dev/null 2>&1; then
-        say "Fetching Mini Benchmarker from $MINI_SOURCE_URL"
-        wget -qO "$MINI_LOCAL_SCRIPT" "$MINI_SOURCE_URL"
-    else
-        err "Need curl or wget to fetch Mini Benchmarker."
-        exit 1
+patch_cachyos_script() {
+    [ -f "$CACHYOS_LOCAL_SCRIPT" ] || return 0
+    if grep -q 'CB_TIME_BIN=' "$CACHYOS_LOCAL_SCRIPT"; then
+        ok "CachyOS benchmark compatibility patch already present"
+        return 0
     fi
-    chmod +x "$MINI_LOCAL_SCRIPT"
-    patch_mini_benchmarker_script
-    ok "Installed Mini Benchmarker to $MINI_LOCAL_SCRIPT"
+    say "Patching CachyOS benchmarker for portable GNU time lookup and non-fatal extras"
+    sed -i '/^TMP="\/tmp"$/a\
+CB_TIME_BIN=""\
+for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do\
+\tif [ -x "$candidate" ]; then\
+\t\tCB_TIME_BIN="$candidate"\
+\t\tbreak\
+\tfi\
+done\
+[[ -z "$CB_TIME_BIN" ]] && echo "GNU time executable not found. Please install the time package." && exit 3\
+' "$CACHYOS_LOCAL_SCRIPT"
+    sed -i 's#/usr/bin/time #$CB_TIME_BIN #g' "$CACHYOS_LOCAL_SCRIPT"
+    sed -i 's/VERSION=$(pacman -Qi cachyos-benchmarker | grep "Version         :")/VERSION=$(pacman -Qi cachyos-benchmarker 2>\/dev\/null | grep "Version         :" || true)/' "$CACHYOS_LOCAL_SCRIPT"
+    sed -i 's#python /usr/bin/benchmark_scraper.py#[ -x /usr/bin/benchmark_scraper.py ] \&\& python /usr/bin/benchmark_scraper.py || true#' "$CACHYOS_LOCAL_SCRIPT"
+    ok "Applied local compatibility patch to $CACHYOS_LOCAL_SCRIPT"
 }
 
-install_mini_benchmarker() {
+fetch_script() {
+    local url="$1"
+    local dest="$2"
+    local parent
+    parent=$(dirname "$dest")
+    mkdir -p "$parent"
+    if command -v curl >/dev/null 2>&1; then
+        say "Fetching $(basename "$dest") from $url"
+        curl -L --fail --silent --show-error "$url" -o "$dest"
+    elif command -v wget >/dev/null 2>&1; then
+        say "Fetching $(basename "$dest") from $url"
+        wget -qO "$dest" "$url"
+    else
+        err "Need curl or wget to fetch benchmark scripts."
+        exit 1
+    fi
+    chmod +x "$dest"
+}
+
+install_common_packages() {
     local distro
     distro=$(detect_distro)
-
     case "$distro" in
         cachyos|arch)
             if command -v pacman >/dev/null 2>&1; then
-                warn "Mini Benchmarker is not guaranteed to be in the standard repos."
-                warn "Preferred path on Arch-derived systems is an AUR helper or the local fetched copy."
                 say "Trying common benchmark dependencies from pacman first."
                 run_privileged pacman -S --needed --noconfirm \
                     python python-pip python-matplotlib stress-ng perf blender x265 argon2 \
                     wget git p7zip primesieve inxi bc unzip xz gcc make cmake nasm time || true
-                fetch_mini_benchmarker_script
-                return
             fi
             ;;
         ubuntu|debian)
@@ -194,14 +233,12 @@ install_mini_benchmarker() {
                     python3 python3-venv python3-pip python3-matplotlib stress-ng linux-perf \
                     blender xz-utils wget git p7zip-full build-essential cmake nasm bc unzip \
                     time inxi || true
-                fetch_mini_benchmarker_script
-                return
             fi
             ;;
+        *)
+            warn "No supported automatic package install path for this distro."
+            ;;
     esac
-
-    warn "No supported automatic package install path for this distro."
-    fetch_mini_benchmarker_script
 }
 
 remove_tree() {
@@ -218,7 +255,7 @@ remove_results() {
     local found=0
     local result_dir
     if [ -d "$RESULTS_ROOT" ]; then
-        for result_dir in "$RESULTS_ROOT"/mini-benchmarker-*; do
+        for result_dir in "$RESULTS_ROOT"/mini-benchmarker-* "$RESULTS_ROOT"/cachyos-benchmarker-*; do
             if [ -e "$result_dir" ]; then
                 found=1
                 rm -rf -- "$result_dir"
@@ -227,7 +264,7 @@ remove_results() {
         done
     fi
     if [ "$found" -eq 0 ]; then
-        warn "No mini-benchmarker result directories found under $RESULTS_ROOT"
+        warn "No benchmark result directories found under $RESULTS_ROOT"
     fi
 }
 
@@ -235,12 +272,28 @@ if [ "$INSTALL_PLOTTER" -eq 1 ]; then
     install_plotter
 fi
 
+if [ "$INSTALL_MINI" -eq 1 ] || [ "$INSTALL_CACHYOS" -eq 1 ]; then
+    install_common_packages
+fi
+
 if [ "$INSTALL_MINI" -eq 1 ]; then
-    install_mini_benchmarker
+    fetch_script "$MINI_SOURCE_URL" "$MINI_LOCAL_SCRIPT"
+    patch_mini_script
+    ok "Installed Mini Benchmarker to $MINI_LOCAL_SCRIPT"
+fi
+
+if [ "$INSTALL_CACHYOS" -eq 1 ]; then
+    fetch_script "$CACHYOS_SOURCE_URL" "$CACHYOS_LOCAL_SCRIPT"
+    patch_cachyos_script
+    ok "Installed CachyOS benchmarker to $CACHYOS_LOCAL_SCRIPT"
 fi
 
 if [ "$REMOVE_MINI" -eq 1 ]; then
     remove_tree "$MINI_LOCAL_DIR"
+fi
+
+if [ "$REMOVE_CACHYOS" -eq 1 ]; then
+    remove_tree "$CACHYOS_LOCAL_DIR"
 fi
 
 if [ "$REMOVE_PLOTTER" -eq 1 ]; then
@@ -249,6 +302,7 @@ fi
 
 if [ "$REMOVE_WORKDIR" -eq 1 ]; then
     remove_tree "$MINI_WORKDIR"
+    remove_tree "$CACHYOS_WORKDIR"
 fi
 
 if [ "$REMOVE_RESULTS" -eq 1 ]; then

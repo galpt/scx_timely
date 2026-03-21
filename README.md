@@ -42,21 +42,28 @@ sudo sh uninstall.sh --purge --force
 
 ## Benchmark Helpers
 
-For quick local baseline-vs-`scx_timely` comparisons, this repo also ships a small Mini Benchmarker wrapper:
+For local scheduler comparisons, this repo ships one umbrella benchmark runner with two suites:
+
+- `mini`: torvic9's Mini Benchmarker
+- `cachyos`: the heavier CachyOS benchmark wrapper, but with local caching and cleaner script patching
+
+The default `mini_benchmarker.sh` entrypoint is kept as a compatibility shortcut for the `mini` suite.
 
 ```bash
-./mini_benchmarker.sh --mode desktop
+./benchmark.sh --suite mini --mode desktop
 ```
 
 Useful helper commands:
 
-- `./mini_benchmarker.sh --check-deps`
-- `./install_benchmark_deps.sh --mini-benchmarker --plotter`
+- `./benchmark.sh --suite mini --check-deps`
+- `./benchmark.sh --suite cachyos --check-deps`
+- `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
 - `./install_benchmark_deps.sh --remove-workdir`
 
 > [!IMPORTANT]
-> - all reported Mini Benchmarker values are elapsed time in seconds, so lower is better
-> - the helper compares your baseline kernel scheduler against `scx_timely` in the selected mode
+> - all reported benchmark values are elapsed time in seconds, so lower is better
+> - both suites compare your baseline kernel scheduler against `scx_bpfland` and `scx_timely`
+> - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - generated charts and CSV summaries are written under `benchmark-results/`
 > - this is local-machine benchmarking, not a universal scheduler claim
 

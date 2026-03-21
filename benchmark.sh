@@ -1,0 +1,782 @@
+#!/usr/bin/env bash
+# benchmark.sh — Baseline vs bpfland vs scx_timely comparison helpers.
+
+set -euo pipefail
+
+RED=$(printf '\033[0;31m')
+GRN=$(printf '\033[0;32m')
+YLW=$(printf '\033[1;33m')
+CYN=$(printf '\033[0;36m')
+BLD=$(printf '\033[1m')
+RST=$(printf '\033[0m')
+
+say()  { printf "${BLD}${CYN}[benchmark]${RST} %s\n" "$1"; }
+ok()   { printf "${BLD}${GRN}[  OK  ]${RST} %s\n" "$1"; }
+warn() { printf "${BLD}${YLW}[ WARN ]${RST} %s\n" "$1"; }
+err()  { printf "${BLD}${RED}[ERROR ]${RST} %s\n" "$1" >&2; }
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SUITE="mini"
+MODE="desktop"
+RUNS=1
+DROP_CACHES=0
+BOOTSTRAP_PLOTTER=0
+CHECK_DEPS_ONLY=0
+BENCHMARK_CMD="${BENCHMARK_CMD:-}"
+PLOTTER="$SCRIPT_DIR/mini_benchmarker_plot.py"
+PLOTTER_PYTHON="${PLOTTER_PYTHON:-python3}"
+RESULTS_DIR=""
+WORKDIR=""
+
+MINI_LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/scx_timely/mini-benchmarker"
+MINI_LOCAL_SCRIPT="$MINI_LOCAL_DIR/mini-benchmarker.sh"
+CACHYOS_LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/scx_timely/cachyos-benchmarker"
+CACHYOS_LOCAL_SCRIPT="$CACHYOS_LOCAL_DIR/cachyos-benchmarker"
+TIMELY_BIN=""
+BPFLAND_BIN=""
+INITIAL_SERVICE_ACTIVE=0
+RESTORE_NEEDED=0
+SUDO_KEEPALIVE_PID=""
+BASELINE_LABEL=""
+POWER_PROFILE="unknown"
+BENCHMARK_LABEL="Mini Benchmarker"
+VARIANT_LABEL_PREFIX="Timely"
+
+usage() {
+    cat <<EOF
+Usage: ./benchmark.sh [options]
+
+Automate scheduler comparisons for:
+  1. Baseline (no sched_ext scheduler)
+  2. scx_bpfland
+  3. scx_timely
+
+Suites:
+  --suite mini      Use torvic9's Mini Benchmarker (default)
+  --suite cachyos   Use CachyOS's heavier benchmark wrapper around the same test family
+
+Options:
+  --suite mini|cachyos          Benchmark suite to run
+  --workdir DIR                 Benchmark asset/work directory
+  --results-dir DIR             Directory for copied logs, chart, and CSV summary
+  --mode desktop|powersave|server
+                                 scx_timely profile for the scheduler run (default: desktop)
+  --runs N                      Number of repeated runs per variant (default: 1)
+  --drop-caches                 Answer "yes" to the benchmark page-cache prompt
+  --benchmark-cmd PATH          Path to the suite runner
+  --bootstrap-plotter           Create a local venv with matplotlib if needed
+  --check-deps                  Report benchmark prerequisites and exit
+  -h, --help                    Show this help
+
+Environment overrides:
+  BENCHMARK_CMD                 Same as --benchmark-cmd
+  PLOTTER_PYTHON                Python interpreter used for chart generation
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --suite)
+            SUITE="$2"
+            shift 2
+            ;;
+        --workdir)
+            WORKDIR="$2"
+            shift 2
+            ;;
+        --results-dir)
+            RESULTS_DIR="$2"
+            shift 2
+            ;;
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        --runs)
+            RUNS="$2"
+            shift 2
+            ;;
+        --drop-caches)
+            DROP_CACHES=1
+            shift
+            ;;
+        --benchmark-cmd)
+            BENCHMARK_CMD="$2"
+            shift 2
+            ;;
+        --bootstrap-plotter)
+            BOOTSTRAP_PLOTTER=1
+            shift
+            ;;
+        --check-deps)
+            CHECK_DEPS_ONLY=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            err "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+case "$SUITE" in
+    mini|cachyos) ;;
+    *)
+        err "Unsupported suite '$SUITE'. Expected mini or cachyos."
+        exit 1
+        ;;
+esac
+
+case "$MODE" in
+    desktop|powersave|server) ;;
+    *)
+        err "Unsupported mode '$MODE'. Expected desktop, powersave, or server."
+        exit 1
+        ;;
+esac
+
+case "$RUNS" in
+    ''|*[!0-9]*|0)
+        err "--runs must be a positive integer"
+        exit 1
+        ;;
+esac
+
+if [ -z "$WORKDIR" ]; then
+    case "$SUITE" in
+        mini) WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/mini-benchmarker-workdir" ;;
+        cachyos) WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/cachyos-benchmarker-workdir" ;;
+    esac
+fi
+
+if [ -z "$RESULTS_DIR" ]; then
+    RESULTS_DIR="$SCRIPT_DIR/benchmark-results/${SUITE}-benchmarker-$(date +%Y%m%d-%H%M%S)"
+fi
+
+case "$SUITE" in
+    mini) BENCHMARK_LABEL="Mini Benchmarker" ;;
+    cachyos) BENCHMARK_LABEL="CachyOS Benchmarker" ;;
+esac
+
+run_privileged() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    else
+        sudo -n "$@"
+    fi
+}
+
+ensure_sudo_ready() {
+    if [ "$(id -u)" -eq 0 ]; then
+        return
+    fi
+    command -v sudo >/dev/null 2>&1 || {
+        err "sudo is required to stop/start schedulers when running as a non-root user."
+        exit 1
+    }
+    say "Refreshing sudo credentials for scheduler stop/start"
+    sudo -v
+}
+
+start_sudo_keepalive() {
+    if [ "$(id -u)" -eq 0 ]; then
+        return
+    fi
+    if [ -n "$SUDO_KEEPALIVE_PID" ] && kill -0 "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1; then
+        return
+    fi
+    (
+        while true; do
+            sudo -n true >/dev/null 2>&1 || exit 0
+            sleep 60
+        done
+    ) &
+    SUDO_KEEPALIVE_PID=$!
+}
+
+stop_sudo_keepalive() {
+    if [ -n "$SUDO_KEEPALIVE_PID" ] && kill -0 "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1; then
+        kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true
+        wait "$SUDO_KEEPALIVE_PID" 2>/dev/null || true
+    fi
+    SUDO_KEEPALIVE_PID=""
+}
+
+detect_baseline_label() {
+    local kernel_name
+    kernel_name=$(uname -sr 2>/dev/null || true)
+    if [ -n "$kernel_name" ]; then
+        BASELINE_LABEL="$kernel_name"
+    else
+        BASELINE_LABEL="Baseline"
+    fi
+}
+
+detect_power_profile() {
+    local profile=""
+    if command -v powerprofilesctl >/dev/null 2>&1; then
+        profile=$(powerprofilesctl get 2>/dev/null || true)
+    elif command -v tuned-adm >/dev/null 2>&1; then
+        profile=$(tuned-adm active 2>/dev/null | sed 's/^Current active profile: //')
+    fi
+    if [ -n "$profile" ]; then
+        POWER_PROFILE="$profile"
+    fi
+}
+
+warn_if_running_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        warn "Running the whole benchmark as root changes HOME and benchmark cache paths."
+        warn "Prefer running ./benchmark.sh as your normal user and let it prompt for sudo when needed."
+    fi
+}
+
+current_sched_ext_ops() {
+    if [ -r /sys/kernel/sched_ext/root/ops ]; then
+        cat /sys/kernel/sched_ext/root/ops 2>/dev/null || true
+    fi
+}
+
+scheduler_is_active() {
+    local name="$1"
+    case "$(current_sched_ext_ops)" in
+        *"$name"*) return 0 ;;
+    esac
+    pgrep -x "scx_${name}" >/dev/null 2>&1
+}
+
+service_exists() {
+    command -v systemctl >/dev/null 2>&1 && systemctl cat scx.service >/dev/null 2>&1
+}
+
+service_is_active() {
+    service_exists && systemctl is-active --quiet scx.service
+}
+
+patch_local_mini_script() {
+    [ -f "$MINI_LOCAL_SCRIPT" ] || return 0
+    if grep -q 'MB_TIME_BIN=' "$MINI_LOCAL_SCRIPT"; then
+        return 0
+    fi
+    sed -i '/^TMP="\/tmp"$/a\
+MB_TIME_BIN=""\
+for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do\
+\tif [ -x "$candidate" ]; then\
+\t\tMB_TIME_BIN="$candidate"\
+\t\tbreak\
+\tfi\
+done\
+[[ -z "$MB_TIME_BIN" ]] && echo "GNU time executable not found. Please install the time package." && exit 3\
+' "$MINI_LOCAL_SCRIPT"
+    sed -i 's#/usr/bin/time #$MB_TIME_BIN #g' "$MINI_LOCAL_SCRIPT"
+}
+
+patch_local_cachyos_script() {
+    [ -f "$CACHYOS_LOCAL_SCRIPT" ] || return 0
+    if grep -q 'CB_TIME_BIN=' "$CACHYOS_LOCAL_SCRIPT"; then
+        return 0
+    fi
+
+    sed -i '/^TMP="\/tmp"$/a\
+CB_TIME_BIN=""\
+for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do\
+\tif [ -x "$candidate" ]; then\
+\t\tCB_TIME_BIN="$candidate"\
+\t\tbreak\
+\tfi\
+done\
+[[ -z "$CB_TIME_BIN" ]] && echo "GNU time executable not found. Please install the time package." && exit 3\
+' "$CACHYOS_LOCAL_SCRIPT"
+    sed -i 's#/usr/bin/time #$CB_TIME_BIN #g' "$CACHYOS_LOCAL_SCRIPT"
+    sed -i 's/VERSION=$(pacman -Qi cachyos-benchmarker | grep "Version         :")/VERSION=$(pacman -Qi cachyos-benchmarker 2>\/dev\/null | grep "Version         :" || true)/' "$CACHYOS_LOCAL_SCRIPT"
+    sed -i 's#python /usr/bin/benchmark_scraper.py#[ -x /usr/bin/benchmark_scraper.py ] \&\& python /usr/bin/benchmark_scraper.py || true#' "$CACHYOS_LOCAL_SCRIPT"
+}
+
+find_benchmark_runner() {
+    local candidate
+
+    if [ -n "$BENCHMARK_CMD" ]; then
+        [ -x "$BENCHMARK_CMD" ] || {
+            err "Benchmark command '$BENCHMARK_CMD' is not executable."
+            exit 1
+        }
+        return
+    fi
+
+    case "$SUITE" in
+        mini)
+            for candidate in "$MINI_LOCAL_SCRIPT" mini-benchmarker.sh mini-benchmarker; do
+                if command -v "$candidate" >/dev/null 2>&1; then
+                    BENCHMARK_CMD=$(command -v "$candidate")
+                    break
+                elif [ -x "$candidate" ]; then
+                    BENCHMARK_CMD="$candidate"
+                    break
+                fi
+            done
+            [ -n "$BENCHMARK_CMD" ] || {
+                err "mini-benchmarker.sh was not found in PATH."
+                say "Install it with ./install_benchmark_deps.sh --mini-benchmarker or set --benchmark-cmd."
+                exit 1
+            }
+            if [ "$BENCHMARK_CMD" = "$MINI_LOCAL_SCRIPT" ]; then
+                patch_local_mini_script
+            fi
+            ;;
+        cachyos)
+            for candidate in "$CACHYOS_LOCAL_SCRIPT" cachyos-benchmarker; do
+                if command -v "$candidate" >/dev/null 2>&1; then
+                    BENCHMARK_CMD=$(command -v "$candidate")
+                    break
+                elif [ -x "$candidate" ]; then
+                    BENCHMARK_CMD="$candidate"
+                    break
+                fi
+            done
+            [ -n "$BENCHMARK_CMD" ] || {
+                err "cachyos-benchmarker was not found."
+                say "Install it with ./install_benchmark_deps.sh --cachyos-benchmarker or set --benchmark-cmd."
+                exit 1
+            }
+            if [ "$BENCHMARK_CMD" = "$CACHYOS_LOCAL_SCRIPT" ]; then
+                patch_local_cachyos_script
+            fi
+            ;;
+    esac
+}
+
+find_scheduler_binaries() {
+    local candidate
+
+    for candidate in \
+        scx_timely \
+        "$SCRIPT_DIR/target/release/scx_timely" \
+        /usr/bin/scx_timely \
+        /usr/local/bin/scx_timely
+    do
+        if [ -x "$candidate" ]; then
+            TIMELY_BIN="$candidate"
+            break
+        fi
+    done
+    [ -n "$TIMELY_BIN" ] || {
+        err "Could not find an executable scx_timely binary."
+        say "Build or install scx_timely first."
+        exit 1
+    }
+
+    for candidate in \
+        scx_bpfland \
+        /usr/bin/scx_bpfland \
+        /usr/local/bin/scx_bpfland
+    do
+        if [ -x "$candidate" ]; then
+            BPFLAND_BIN="$candidate"
+            break
+        fi
+    done
+    [ -n "$BPFLAND_BIN" ] || {
+        err "Could not find an executable scx_bpfland binary."
+        say "Install scx_bpfland first so the comparison can include the upstream baseline scheduler."
+        exit 1
+    }
+}
+
+check_plot_deps() {
+    command -v "$PLOTTER_PYTHON" >/dev/null 2>&1 || {
+        err "Python interpreter '$PLOTTER_PYTHON' was not found."
+        exit 1
+    }
+    [ -f "$PLOTTER" ] || {
+        err "Missing plot helper: $PLOTTER"
+        exit 1
+    }
+    if "$PLOTTER_PYTHON" - <<'PY'
+import matplotlib  # noqa: F401
+PY
+    then
+        return
+    fi
+
+    if [ "$BOOTSTRAP_PLOTTER" -eq 1 ]; then
+        local venv_dir="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/mini-benchmarker-venv"
+        python3 -m venv "$venv_dir"
+        # shellcheck disable=SC1090
+        . "$venv_dir/bin/activate"
+        pip install --quiet matplotlib
+        PLOTTER_PYTHON="$venv_dir/bin/python"
+        return
+    fi
+
+    err "matplotlib is required for chart generation."
+    say "Re-run with --bootstrap-plotter to install it in a local virtualenv."
+    exit 1
+}
+
+ensure_results_path_writable() {
+    local parent
+    parent=$(dirname "$RESULTS_DIR")
+    mkdir -p "$parent" 2>/dev/null || {
+        err "Cannot create benchmark results parent directory: $parent"
+        exit 1
+    }
+    if [ ! -w "$parent" ]; then
+        err "Benchmark results parent directory is not writable: $parent"
+        exit 1
+    fi
+}
+
+print_install_hints() {
+    cat <<'EOF'
+Install hints:
+  - Mini Benchmarker helper: ./install_benchmark_deps.sh --mini-benchmarker --plotter
+  - CachyOS helper         : ./install_benchmark_deps.sh --cachyos-benchmarker --plotter
+  - local fetched helpers are searched under ~/.local/share/scx_timely/
+EOF
+}
+
+check_runtime_command() {
+    local label="$1"
+    shift
+    local candidate
+    for candidate in "$@"; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            ok "$label available: $(command -v "$candidate")"
+            return 0
+        fi
+    done
+    err "$label missing"
+    return 1
+}
+
+check_gnu_time_binary() {
+    local candidate
+    for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do
+        if [ -x "$candidate" ]; then
+            ok "GNU time executable available: $candidate"
+            return 0
+        fi
+    done
+    err "GNU time executable missing"
+    return 1
+}
+
+check_runtime_prereqs() {
+    local missing=0
+    check_gnu_time_binary || missing=1
+    check_runtime_command "stress-ng" stress-ng || missing=1
+    check_runtime_command "perf" perf || missing=1
+    check_runtime_command "blender" blender || missing=1
+    check_runtime_command "primesieve" primesieve || missing=1
+    check_runtime_command "argon2" argon2 || missing=1
+    check_runtime_command "x265" x265 || missing=1
+    check_runtime_command "7z" 7z || missing=1
+    check_runtime_command "wget" wget || missing=1
+    check_runtime_command "tar" tar || missing=1
+    check_runtime_command "xz" xz || missing=1
+    check_runtime_command "make" make || missing=1
+    check_runtime_command "cmake" cmake || missing=1
+    check_runtime_command "nasm" nasm || missing=1
+    check_runtime_command "C compiler" cc gcc clang || missing=1
+    check_runtime_command "python shim for benchmark scripts" python || missing=1
+    check_runtime_command "inxi" inxi || missing=1
+    return "$missing"
+}
+
+check_dependency_status() {
+    local missing=0
+    say "Checking benchmark prerequisites for $BENCHMARK_LABEL"
+
+    if command -v python3 >/dev/null 2>&1; then
+        ok "python3 available"
+    else
+        err "python3 missing"
+        missing=1
+    fi
+
+    if [ -f "$PLOTTER" ]; then
+        ok "plot helper present: $(basename "$PLOTTER")"
+    else
+        err "plot helper missing: $PLOTTER"
+        missing=1
+    fi
+
+    if command -v "$PLOTTER_PYTHON" >/dev/null 2>&1 && \
+       "$PLOTTER_PYTHON" - <<'PY' >/dev/null 2>&1
+import matplotlib  # noqa: F401
+PY
+    then
+        ok "matplotlib import works"
+    else
+        warn "matplotlib not available for $PLOTTER_PYTHON"
+    fi
+
+    find_benchmark_runner || missing=1
+    find_scheduler_binaries || missing=1
+
+    if [ -r /sys/kernel/sched_ext/root/ops ]; then
+        ok "sched_ext sysfs present"
+    else
+        warn "sched_ext sysfs not visible; benchmarking may not work on this kernel"
+    fi
+
+    if [ "$(id -u)" -eq 0 ]; then
+        ok "running as root; sudo ticket not required"
+    elif command -v sudo >/dev/null 2>&1; then
+        if sudo -n true >/dev/null 2>&1; then
+            ok "sudo ticket already valid"
+        else
+            warn "sudo ticket not cached; the runner will prompt before starting benchmark runs"
+        fi
+    else
+        err "sudo missing; non-root benchmark orchestration cannot stop/start schedulers"
+        missing=1
+    fi
+
+    say "Checking benchmark runtime tools"
+    check_runtime_prereqs || missing=1
+    print_install_hints
+    return "$missing"
+}
+
+ensure_supported_scheduler_state() {
+    local ops
+    ops=$(current_sched_ext_ops || true)
+    if [ -n "$ops" ] && ! printf '%s' "$ops" | grep -Eqi 'timely|bpfland'; then
+        err "Another sched_ext scheduler is active: $ops"
+        say "Disable it first, then rerun benchmark.sh."
+        exit 1
+    fi
+}
+
+wait_for_scheduler_state() {
+    local scheduler="$1"
+    local want="$2"
+    local attempt
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if [ "$want" = "active" ] && scheduler_is_active "$scheduler"; then
+            return 0
+        fi
+        if [ "$want" = "inactive" ] && ! scheduler_is_active "$scheduler"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+stop_all_schedulers() {
+    if service_is_active; then
+        say "Stopping scx.service"
+        run_privileged systemctl stop scx.service
+    fi
+    if pgrep -x scx_timely >/dev/null 2>&1; then
+        say "Stopping running scx_timely processes"
+        run_privileged pkill -x scx_timely || true
+    fi
+    if pgrep -x scx_bpfland >/dev/null 2>&1; then
+        say "Stopping running scx_bpfland processes"
+        run_privileged pkill -x scx_bpfland || true
+    fi
+    wait_for_scheduler_state timely inactive || true
+    wait_for_scheduler_state bpfland inactive || true
+}
+
+start_bpfland_manual() {
+    local runtime_log="$RESULTS_DIR/console/scx_bpfland.log"
+    say "Starting scx_bpfland"
+    run_privileged env RUST_LOG=info "$BPFLAND_BIN" >"$runtime_log" 2>&1 &
+    wait_for_scheduler_state bpfland active || {
+        err "scx_bpfland did not become active."
+        exit 1
+    }
+}
+
+start_timely_manual() {
+    local runtime_log="$RESULTS_DIR/console/scx_timely-${MODE}.log"
+    say "Starting scx_timely in ${MODE} mode"
+    run_privileged env RUST_LOG=info "$TIMELY_BIN" --mode "$MODE" >"$runtime_log" 2>&1 &
+    wait_for_scheduler_state timely active || {
+        err "scx_timely did not become active."
+        exit 1
+    }
+}
+
+cleanup_exit() {
+    local status="$1"
+    trap - EXIT
+    stop_sudo_keepalive
+    if [ "$RESTORE_NEEDED" -eq 1 ]; then
+        restore_initial_state || true
+    fi
+    exit "$status"
+}
+
+restore_initial_state() {
+    if [ "$INITIAL_SERVICE_ACTIVE" -eq 1 ]; then
+        stop_all_schedulers || true
+        say "Restoring scx.service"
+        run_privileged systemctl start scx.service || true
+        return
+    fi
+    stop_all_schedulers || true
+}
+
+tag_log_copy() {
+    local source_log="$1"
+    local tagged_log="$2"
+    local label="$3"
+    local variant_slug="$4"
+    local power_profile="$5"
+
+    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+label = sys.argv[3]
+variant = sys.argv[4]
+power_profile = sys.argv[5]
+text = source.read_text(encoding="utf-8", errors="replace")
+match = re.search(r"Kernel:\s+(\S+)", text)
+if not match:
+    raise SystemExit(f"Could not find Kernel: line in {source}")
+kernel = match.group(1)
+tagged = f"Kernel: {kernel}__{variant}"
+text = re.sub(r"Kernel:\s+\S+", tagged, text, count=1)
+text += (
+    f"\nBenchmark label: {label}\n"
+    f"Original kernel: {kernel}\n"
+    f"Benchmark variant: {variant}\n"
+    f"Power profile: {power_profile}\n"
+)
+target.write_text(text, encoding="utf-8")
+PY
+}
+
+run_one_benchmark() {
+    local variant_slug="$1"
+    local label="$2"
+    local run_index="$3"
+    local run_name
+    local cache_answer
+    local raw_log
+    local tagged_log
+
+    run_name="${variant_slug}_run$(printf '%02d' "$run_index")"
+    cache_answer="n"
+    if [ "$DROP_CACHES" -eq 1 ]; then
+        cache_answer="y"
+    fi
+
+    say "Running ${BENCHMARK_LABEL}: ${label} (run ${run_index}/${RUNS})"
+    mkdir -p "$WORKDIR"
+    printf '%s\n%s\n' "$cache_answer" "$run_name" | \
+        "$BENCHMARK_CMD" "$WORKDIR" | tee "$RESULTS_DIR/console/${run_name}.out"
+
+    raw_log=$(find "$WORKDIR" -maxdepth 1 -type f -name "benchie_${run_name}_*.log" | sort | tail -n 1)
+    [ -n "$raw_log" ] || {
+        err "Could not locate benchmark log for ${run_name}"
+        exit 1
+    }
+
+    cp "$raw_log" "$RESULTS_DIR/raw/"
+    tagged_log="$RESULTS_DIR/tagged/$(basename "$raw_log")"
+    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE"
+    ok "Saved $(basename "$raw_log")"
+}
+
+run_variant() {
+    local variant_slug="$1"
+    local label="$2"
+    local action="$3"
+    local run_index
+
+    case "$action" in
+        baseline)
+            stop_all_schedulers
+            ;;
+        bpfland)
+            stop_all_schedulers
+            start_bpfland_manual
+            ;;
+        timely)
+            stop_all_schedulers
+            start_timely_manual
+            ;;
+        *)
+            err "Unsupported run action: $action"
+            exit 1
+            ;;
+    esac
+
+    for run_index in $(seq 1 "$RUNS"); do
+        run_one_benchmark "$variant_slug" "$label" "$run_index"
+    done
+}
+
+main() {
+    warn_if_running_as_root
+    ensure_results_path_writable
+    mkdir -p "$WORKDIR" "$RESULTS_DIR/raw" "$RESULTS_DIR/tagged" "$RESULTS_DIR/console"
+    trap 'cleanup_exit $?' EXIT
+
+    find_benchmark_runner
+
+    if [ "$CHECK_DEPS_ONLY" -eq 1 ]; then
+        check_dependency_status
+        exit 0
+    fi
+
+    find_scheduler_binaries
+    check_plot_deps
+    check_runtime_prereqs || {
+        err "Benchmark runtime prerequisites are incomplete."
+        say "Run ./benchmark.sh --check-deps or ./install_benchmark_deps.sh first."
+        exit 1
+    }
+    detect_baseline_label
+    detect_power_profile
+    ensure_sudo_ready
+    start_sudo_keepalive
+    ensure_supported_scheduler_state
+
+    if service_is_active; then
+        INITIAL_SERVICE_ACTIVE=1
+    fi
+    RESTORE_NEEDED=1
+
+    say "Benchmark suite          : $BENCHMARK_LABEL"
+    say "Benchmark command        : $BENCHMARK_CMD"
+    say "scx_bpfland binary       : $BPFLAND_BIN"
+    say "scx_timely binary        : $TIMELY_BIN"
+    say "Work directory           : $WORKDIR"
+    say "Results directory        : $RESULTS_DIR"
+    say "Timely benchmark mode    : $MODE"
+    say "Runs per variant         : $RUNS"
+    say "Power profile            : $POWER_PROFILE"
+
+    run_variant "baseline" "$BASELINE_LABEL" baseline
+    run_variant "bpfland" "bpfland" bpfland
+    run_variant "timely-${MODE}" "Timely (${MODE})" timely
+
+    "$PLOTTER_PYTHON" "$PLOTTER" "$RESULTS_DIR/tagged" \
+        --title "${BENCHMARK_LABEL} Comparison (${MODE} mode)"
+
+    restore_initial_state
+    RESTORE_NEEDED=0
+
+    ok "${BENCHMARK_LABEL} comparison complete."
+    say "Chart: $RESULTS_DIR/tagged/mini_benchmarker_comparison.png"
+    say "Chart: $RESULTS_DIR/tagged/mini_benchmarker_comparison.svg"
+    say "CSV  : $RESULTS_DIR/tagged/mini_benchmarker_summary.csv"
+}
+
+main "$@"
