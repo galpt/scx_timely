@@ -23,7 +23,7 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use crossbeam::channel::RecvTimeoutError;
 use libbpf_rs::OpenObject;
 use libbpf_rs::ProgramInput;
@@ -49,6 +49,116 @@ use scx_utils::NR_CPU_IDS;
 use stats::Metrics;
 
 const SCHEDULER_NAME: &str = "scx_timely";
+const DEFAULT_SLICE_US: u64 = 1000;
+const DEFAULT_SLICE_MIN_US: u64 = 0;
+const DEFAULT_SLICE_US_LAG: u64 = 40000;
+const DEFAULT_THROTTLE_US: u64 = 0;
+const DEFAULT_IDLE_RESUME_US: i64 = -1;
+const DEFAULT_PRIMARY_DOMAIN: &str = "auto";
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+enum TimelyMode {
+    Desktop,
+    Powersave,
+    Server,
+}
+
+#[derive(Clone, Debug)]
+struct EffectiveConfig {
+    mode: TimelyMode,
+    slice_us: u64,
+    slice_min_us: u64,
+    slice_us_lag: u64,
+    throttle_us: u64,
+    idle_resume_us: i64,
+    primary_domain: String,
+    preferred_idle_scan: bool,
+    local_pcpu: bool,
+    local_kthreads: bool,
+    sticky_tasks: bool,
+    no_wake_sync: bool,
+    cpufreq: bool,
+}
+
+impl EffectiveConfig {
+    fn from_opts(opts: &Opts) -> Self {
+        let mut config = match opts.mode {
+            TimelyMode::Desktop => Self {
+                mode: opts.mode,
+                slice_us: DEFAULT_SLICE_US,
+                slice_min_us: DEFAULT_SLICE_MIN_US,
+                slice_us_lag: DEFAULT_SLICE_US_LAG,
+                throttle_us: DEFAULT_THROTTLE_US,
+                idle_resume_us: DEFAULT_IDLE_RESUME_US,
+                primary_domain: DEFAULT_PRIMARY_DOMAIN.into(),
+                preferred_idle_scan: true,
+                local_pcpu: false,
+                local_kthreads: false,
+                sticky_tasks: false,
+                no_wake_sync: false,
+                cpufreq: false,
+            },
+            TimelyMode::Powersave => Self {
+                mode: opts.mode,
+                slice_us: 1500,
+                slice_min_us: 500,
+                slice_us_lag: 20000,
+                throttle_us: 250,
+                idle_resume_us: 5000,
+                primary_domain: "powersave".into(),
+                preferred_idle_scan: false,
+                local_pcpu: false,
+                local_kthreads: false,
+                sticky_tasks: false,
+                no_wake_sync: false,
+                cpufreq: true,
+            },
+            TimelyMode::Server => Self {
+                mode: opts.mode,
+                slice_us: 2000,
+                slice_min_us: 250,
+                slice_us_lag: 80000,
+                throttle_us: 0,
+                idle_resume_us: DEFAULT_IDLE_RESUME_US,
+                primary_domain: "all".into(),
+                preferred_idle_scan: false,
+                local_pcpu: true,
+                local_kthreads: true,
+                sticky_tasks: true,
+                no_wake_sync: false,
+                cpufreq: false,
+            },
+        };
+
+        if opts.slice_us != DEFAULT_SLICE_US {
+            config.slice_us = opts.slice_us;
+        }
+        if opts.slice_min_us != DEFAULT_SLICE_MIN_US {
+            config.slice_min_us = opts.slice_min_us;
+        }
+        if opts.slice_us_lag != DEFAULT_SLICE_US_LAG {
+            config.slice_us_lag = opts.slice_us_lag;
+        }
+        if opts.throttle_us != DEFAULT_THROTTLE_US {
+            config.throttle_us = opts.throttle_us;
+        }
+        if opts.idle_resume_us != DEFAULT_IDLE_RESUME_US {
+            config.idle_resume_us = opts.idle_resume_us;
+        }
+        if opts.primary_domain != DEFAULT_PRIMARY_DOMAIN {
+            config.primary_domain = opts.primary_domain.clone();
+        }
+
+        config.preferred_idle_scan |= opts.preferred_idle_scan;
+        config.local_pcpu |= opts.local_pcpu;
+        config.local_kthreads |= opts.local_kthreads;
+        config.sticky_tasks |= opts.sticky_tasks;
+        config.no_wake_sync |= opts.no_wake_sync;
+        config.cpufreq |= opts.cpufreq;
+
+        config
+    }
+}
 
 #[derive(PartialEq)]
 enum Powermode {
@@ -113,6 +223,10 @@ fn cpus_to_cpumask(cpus: &Vec<usize>) -> String {
 /// TIMELY-specific control logic is introduced.
 #[derive(Debug, Parser)]
 struct Opts {
+    /// Select a high-level scheduler mode.
+    #[clap(long, value_enum, default_value = "desktop")]
+    mode: TimelyMode,
+
     /// Exit debug dump buffer length. 0 indicates default.
     #[clap(long, default_value = "0")]
     exit_dump_len: u32,
@@ -252,7 +366,7 @@ struct Opts {
 struct Scheduler<'a> {
     skel: BpfSkel<'a>,
     struct_ops: Option<libbpf_rs::Link>,
-    opts: &'a Opts,
+    config: EffectiveConfig,
     topo: Topology,
     power_profile: PowerProfile,
     stats_server: StatsServer<(), Metrics>,
@@ -262,6 +376,7 @@ struct Scheduler<'a> {
 impl<'a> Scheduler<'a> {
     fn init(opts: &'a Opts, open_object: &'a mut MaybeUninit<OpenObject>) -> Result<Self> {
         try_set_rlimit_infinity();
+        let config = EffectiveConfig::from_opts(opts);
 
         // Initialize CPU topology.
         let topo = Topology::new().unwrap();
@@ -286,10 +401,10 @@ impl<'a> Scheduler<'a> {
         // Determine the primary scheduling domain.
         let power_profile = Self::power_profile();
         let domain =
-            Self::resolve_energy_domain(&opts.primary_domain, power_profile).map_err(|err| {
+            Self::resolve_energy_domain(&config.primary_domain, power_profile).map_err(|err| {
                 anyhow!(
                     "failed to resolve primary domain '{}': {}",
-                    &opts.primary_domain,
+                    &config.primary_domain,
                     err
                 )
             })?;
@@ -306,16 +421,26 @@ impl<'a> Scheduler<'a> {
             "scheduler options: {}",
             std::env::args().collect::<Vec<_>>().join(" ")
         );
+        info!(
+            "mode={:?} slice_us={} slice_min_us={} slice_us_lag={} throttle_us={} primary_domain={} cpufreq={}",
+            config.mode,
+            config.slice_us,
+            config.slice_min_us,
+            config.slice_us_lag,
+            config.throttle_us,
+            config.primary_domain,
+            config.cpufreq
+        );
 
-        if opts.idle_resume_us >= 0 {
+        if config.idle_resume_us >= 0 {
             if !cpu_idle_resume_latency_supported() {
                 warn!("idle resume latency not supported");
             } else {
-                info!("Setting idle QoS to {} us", opts.idle_resume_us);
+                info!("Setting idle QoS to {} us", config.idle_resume_us);
                 for cpu in topo.all_cpus.values() {
                     update_cpu_idle_resume_latency(
                         cpu.id,
-                        opts.idle_resume_us.try_into().unwrap(),
+                        config.idle_resume_us.try_into().unwrap(),
                     )?;
                 }
             }
@@ -334,13 +459,13 @@ impl<'a> Scheduler<'a> {
         rodata.debug = opts.debug;
         rodata.smt_enabled = smt_enabled;
         rodata.numa_enabled = numa_enabled;
-        rodata.local_pcpu = opts.local_pcpu;
-        rodata.no_wake_sync = opts.no_wake_sync;
-        rodata.sticky_tasks = opts.sticky_tasks;
-        rodata.slice_max = opts.slice_us * 1000;
-        rodata.slice_min = opts.slice_min_us * 1000;
-        rodata.slice_lag = opts.slice_us_lag * 1000;
-        rodata.throttle_ns = opts.throttle_us * 1000;
+        rodata.local_pcpu = config.local_pcpu;
+        rodata.no_wake_sync = config.no_wake_sync;
+        rodata.sticky_tasks = config.sticky_tasks;
+        rodata.slice_max = config.slice_us * 1000;
+        rodata.slice_min = config.slice_min_us * 1000;
+        rodata.slice_lag = config.slice_us_lag * 1000;
+        rodata.throttle_ns = config.throttle_us * 1000;
         rodata.primary_all = domain.weight() == *NR_CPU_IDS;
 
         // Generate the list of available CPUs sorted by capacity in descending order.
@@ -350,17 +475,17 @@ impl<'a> Scheduler<'a> {
             rodata.cpu_capacity[cpu.id] = cpu.cpu_capacity as c_ulong;
             rodata.preferred_cpus[i] = cpu.id as u64;
         }
-        if opts.preferred_idle_scan {
+        if config.preferred_idle_scan {
             info!(
                 "Preferred CPUs: {:?}",
                 &rodata.preferred_cpus[0..cpus.len()]
             );
         }
-        rodata.preferred_idle_scan = opts.preferred_idle_scan;
+        rodata.preferred_idle_scan = config.preferred_idle_scan;
 
         // Implicitly enable direct dispatch of per-CPU kthreads if CPU throttling is enabled
         // (it's never a good idea to throttle per-CPU kthreads).
-        rodata.local_kthreads = opts.local_kthreads || opts.throttle_us > 0;
+        rodata.local_kthreads = config.local_kthreads || config.throttle_us > 0;
 
         // Set scheduler flags.
         skel.struct_ops.timely_ops_mut().flags = *compat::SCX_OPS_ENQ_EXITING
@@ -390,7 +515,8 @@ impl<'a> Scheduler<'a> {
         })?;
 
         // Initialize CPU frequency scaling.
-        if let Err(err) = Self::init_cpufreq_perf(&mut skel, &opts.primary_domain, opts.cpufreq) {
+        if let Err(err) = Self::init_cpufreq_perf(&mut skel, &config.primary_domain, config.cpufreq)
+        {
             bail!(
                 "failed to initialize cpufreq performance level: error {}",
                 err
@@ -409,7 +535,7 @@ impl<'a> Scheduler<'a> {
         Ok(Self {
             skel,
             struct_ops,
-            opts,
+            config,
             topo,
             power_profile,
             stats_server,
@@ -527,13 +653,13 @@ impl<'a> Scheduler<'a> {
             if power_profile != self.power_profile {
                 self.power_profile = power_profile;
 
-                if self.opts.primary_domain == "auto" {
+                if self.config.primary_domain == "auto" {
                     return true;
                 }
                 if let Err(err) = Self::init_cpufreq_perf(
                     &mut self.skel,
-                    &self.opts.primary_domain,
-                    self.opts.cpufreq,
+                    &self.config.primary_domain,
+                    self.config.cpufreq,
                 ) {
                     warn!("failed to refresh cpufreq performance level: error {}", err);
                 }
@@ -620,7 +746,7 @@ impl Drop for Scheduler<'_> {
         info!("Unregister {SCHEDULER_NAME} scheduler");
 
         // Restore default CPU idle QoS resume latency.
-        if self.opts.idle_resume_us >= 0 {
+        if self.config.idle_resume_us >= 0 {
             if cpu_idle_resume_latency_supported() {
                 for cpu in self.topo.all_cpus.values() {
                     update_cpu_idle_resume_latency(cpu.id, cpu.pm_qos_resume_latency_us as i32)
