@@ -26,12 +26,27 @@ The intended direction is:
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
 - all three modes also set a queue-delay target that the scheduler uses for mild TIMELY-style slice shaping
 
+## Install
+
+`scx_timely` currently supports source-based installation via the local helper scripts:
+
+```bash
+sudo sh install.sh --build-from-source --force
+```
+
+To remove it again:
+
+```bash
+sudo sh uninstall.sh --purge --force
+```
+
 ## Important Notes
 
 > [!IMPORTANT]
 > - this repository is at the bootstrap stage
 > - the current code should be read as a clean starting base, not as a complete TIMELY implementation
 > - future README claims should stay tied to measured behavior and local validation
+> - the install path is intentionally source-first for now; release-download automation can come later after the scheduler behavior settles
 
 ## Inspirations and References
 
