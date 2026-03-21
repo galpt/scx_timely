@@ -69,6 +69,7 @@ struct EffectiveConfig {
     slice_us: u64,
     slice_min_us: u64,
     slice_us_lag: u64,
+    delay_target_us: u64,
     throttle_us: u64,
     idle_resume_us: i64,
     primary_domain: String,
@@ -88,6 +89,7 @@ impl EffectiveConfig {
                 slice_us: DEFAULT_SLICE_US,
                 slice_min_us: DEFAULT_SLICE_MIN_US,
                 slice_us_lag: DEFAULT_SLICE_US_LAG,
+                delay_target_us: 2_000,
                 throttle_us: DEFAULT_THROTTLE_US,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: DEFAULT_PRIMARY_DOMAIN.into(),
@@ -103,6 +105,7 @@ impl EffectiveConfig {
                 slice_us: 1500,
                 slice_min_us: 500,
                 slice_us_lag: 20000,
+                delay_target_us: 4_000,
                 throttle_us: 250,
                 idle_resume_us: 5000,
                 primary_domain: "powersave".into(),
@@ -118,6 +121,7 @@ impl EffectiveConfig {
                 slice_us: 2000,
                 slice_min_us: 250,
                 slice_us_lag: 80000,
+                delay_target_us: 3_000,
                 throttle_us: 0,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: "all".into(),
@@ -422,11 +426,12 @@ impl<'a> Scheduler<'a> {
             std::env::args().collect::<Vec<_>>().join(" ")
         );
         info!(
-            "mode={:?} slice_us={} slice_min_us={} slice_us_lag={} throttle_us={} primary_domain={} cpufreq={}",
+            "mode={:?} slice_us={} slice_min_us={} slice_us_lag={} delay_target_us={} throttle_us={} primary_domain={} cpufreq={}",
             config.mode,
             config.slice_us,
             config.slice_min_us,
             config.slice_us_lag,
+            config.delay_target_us,
             config.throttle_us,
             config.primary_domain,
             config.cpufreq
@@ -465,6 +470,7 @@ impl<'a> Scheduler<'a> {
         rodata.slice_max = config.slice_us * 1000;
         rodata.slice_min = config.slice_min_us * 1000;
         rodata.slice_lag = config.slice_us_lag * 1000;
+        rodata.timely_target_ns = config.delay_target_us * 1000;
         rodata.throttle_ns = config.throttle_us * 1000;
         rodata.primary_all = domain.weight() == *NR_CPU_IDS;
 
@@ -715,6 +721,7 @@ impl<'a> Scheduler<'a> {
             nr_kthread_dispatches: bss_data.nr_kthread_dispatches,
             nr_direct_dispatches: bss_data.nr_direct_dispatches,
             nr_shared_dispatches: bss_data.nr_shared_dispatches,
+            nr_delay_scaled_dispatches: bss_data.nr_delay_scaled_dispatches,
         }
     }
 

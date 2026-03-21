@@ -9,7 +9,7 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 - this repository currently starts from a renamed `scx_bpfland` scaffold
 - scheduling behavior is still intentionally close to upstream `scx_bpfland`
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
-- TIMELY-specific control-law changes have not been introduced yet
+- a first TIMELY-inspired signal now measures queue delay and gently reduces slice size when delay rises above a mode-specific target
 
 ## Design Direction
 
@@ -24,6 +24,7 @@ The intended direction is:
 - `desktop` keeps the baseline interactive profile and enables preferred idle scanning
 - `powersave` narrows the primary domain toward efficient cores and enables conservative throttling
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
+- all three modes also set a queue-delay target that the scheduler uses for mild TIMELY-style slice shaping
 
 ## Important Notes
 

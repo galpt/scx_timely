@@ -59,6 +59,12 @@ const volatile u64 slice_min;
 const volatile u64 slice_lag = 40ULL * NSEC_PER_MSEC;
 
 /*
+ * TIMELY-inspired queue delay target used to gently reduce slice size when a
+ * task's observed queue delay drifts above the target.
+ */
+const volatile u64 timely_target_ns = 2ULL * NSEC_PER_MSEC;
+
+/*
  * Ignore synchronous wakeup events.
  */
 const volatile bool no_wake_sync;
@@ -114,7 +120,8 @@ const volatile u64 cpu_capacity[MAX_CPUS];
 /*
  * Scheduling statistics.
  */
-volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches;
+volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches,
+	     nr_delay_scaled_dispatches;
 
 /*
  * Amount of currently running tasks.
@@ -228,6 +235,8 @@ struct cpu_ctx *try_lookup_cpu_ctx(s32 cpu)
  */
 struct task_ctx {
 	u64 awake_vtime;
+	u64 avg_queue_delay;
+	u64 last_enqueued_at;
 	u64 last_run_at;
 	u64 wakeup_freq;
 	u64 last_woke_at;
@@ -715,6 +724,7 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 {
 	u64 nr_wait = scx_bpf_dsq_nr_queued(cpu_dsq(cpu)) +
 		      scx_bpf_dsq_nr_queued(node_dsq(cpu));
+	struct task_ctx *tctx = try_lookup_task_ctx(p);
 	u64 slice;
 
 	/*
@@ -723,8 +733,22 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	 * time slice smaller than @slice_min.
 	 */
 	slice = scale_by_task_weight(p, slice_max) / MAX(nr_wait, 1);
+	slice = MAX(slice, slice_min);
 
-	return MAX(slice, slice_min);
+	/*
+	 * Apply a small TIMELY-style reduction when the task's measured queue
+	 * delay is above the target. This reduces burst size under growing
+	 * scheduler delay without changing queue selection.
+	 */
+	if (tctx && timely_target_ns && tctx->avg_queue_delay > timely_target_ns) {
+		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
+		u64 scaled = slice * timely_target_ns / tctx->avg_queue_delay;
+
+		slice = MAX(scaled, min_slice);
+		__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
+	}
+
+	return slice;
 }
 
 /*
@@ -757,6 +781,7 @@ s32 BPF_STRUCT_OPS(timely_select_cpu, struct task_struct *p, s32 prev_cpu, u64 w
 
 		tctx = try_lookup_task_ctx(p);
 		if (tctx) {
+			tctx->last_enqueued_at = bpf_ktime_get_ns();
 			scx_bpf_dsq_insert_vtime(p, cpu_dsq(cpu),
 						 task_slice(p, cpu), task_dl(p, cpu, tctx), 0);
 			__sync_fetch_and_add(&nr_direct_dispatches, 1);
@@ -830,6 +855,7 @@ void BPF_STRUCT_OPS(timely_enqueue, struct task_struct *p, u64 enq_flags)
 	tctx = try_lookup_task_ctx(p);
 	if (!tctx)
 		return;
+	tctx->last_enqueued_at = bpf_ktime_get_ns();
 
 	/*
 	 * If the task is marked as sticky due to excessive rescheduling
@@ -1045,6 +1071,13 @@ void BPF_STRUCT_OPS(timely_running, struct task_struct *p)
 	 * the used time slice).
 	 */
 	tctx->last_run_at = bpf_ktime_get_ns();
+	if (tctx->last_enqueued_at) {
+		u64 delay = tctx->last_run_at > tctx->last_enqueued_at
+				    ? tctx->last_run_at - tctx->last_enqueued_at
+				    : 1;
+		tctx->avg_queue_delay = calc_avg(tctx->avg_queue_delay, delay);
+		tctx->last_enqueued_at = 0;
+	}
 
 	/*
 	 * Adjust target CPU frequency before the task starts to run.
