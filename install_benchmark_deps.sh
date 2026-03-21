@@ -173,12 +173,9 @@ done\
 
 patch_cachyos_script() {
     [ -f "$CACHYOS_LOCAL_SCRIPT" ] || return 0
-    if grep -q 'CB_TIME_BIN=' "$CACHYOS_LOCAL_SCRIPT"; then
-        ok "CachyOS benchmark compatibility patch already present"
-        return 0
-    fi
-    say "Patching CachyOS benchmarker for portable GNU time lookup and non-fatal extras"
-    sed -i '/^TMP="\/tmp"$/a\
+    if ! grep -q 'CB_TIME_BIN=' "$CACHYOS_LOCAL_SCRIPT"; then
+        say "Patching CachyOS benchmarker for portable GNU time lookup and non-fatal extras"
+        sed -i '/^TMP="\/tmp"$/a\
 CB_TIME_BIN=""\
 for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do\
 \tif [ -x "$candidate" ]; then\
@@ -188,9 +185,63 @@ for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/g
 done\
 [[ -z "$CB_TIME_BIN" ]] && echo "GNU time executable not found. Please install the time package." && exit 3\
 ' "$CACHYOS_LOCAL_SCRIPT"
-    sed -i 's#/usr/bin/time #$CB_TIME_BIN #g' "$CACHYOS_LOCAL_SCRIPT"
-    sed -i 's/VERSION=$(pacman -Qi cachyos-benchmarker | grep "Version         :")/VERSION=$(pacman -Qi cachyos-benchmarker 2>\/dev\/null | grep "Version         :" || true)/' "$CACHYOS_LOCAL_SCRIPT"
-    sed -i 's#python /usr/bin/benchmark_scraper.py#[ -x /usr/bin/benchmark_scraper.py ] \&\& python /usr/bin/benchmark_scraper.py || true#' "$CACHYOS_LOCAL_SCRIPT"
+        sed -i 's#/usr/bin/time #$CB_TIME_BIN #g' "$CACHYOS_LOCAL_SCRIPT"
+        sed -i 's/VERSION=$(pacman -Qi cachyos-benchmarker | grep "Version         :")/VERSION=$(pacman -Qi cachyos-benchmarker 2>\/dev\/null | grep "Version         :" || true)/' "$CACHYOS_LOCAL_SCRIPT"
+        sed -i 's#python /usr/bin/benchmark_scraper.py#[ -x /usr/bin/benchmark_scraper.py ] \&\& python /usr/bin/benchmark_scraper.py || true#' "$CACHYOS_LOCAL_SCRIPT"
+    fi
+
+    if ! grep -q 'SCX_BIN_VERSION=' "$CACHYOS_LOCAL_SCRIPT"; then
+        say "Patching CachyOS benchmarker for generic sched_ext version detection"
+        python3 - "$CACHYOS_LOCAL_SCRIPT" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = """# Set defaults as none
+SCX=\"none\"
+SCX_VERSION=\"\"
+# update if we find them below
+
+if [ -f \"/sys/kernel/sched_ext/root/ops\" ]; then
+\tTMP=$(cat \"/sys/kernel/sched_ext/root/ops\")
+\tif [ -n \"$TMP\" ]; then
+\t\tSCX=$(awk -F'[[:digit:]]' '{print $1}' \"/sys/kernel/sched_ext/root/ops\" | sed -rn 's/^(.*)_$/\\1/p')
+\t\tSCX_VERSION=$(sed -rn 's/^[^0-9]*([0-9]+(\\.[0-9]+)+).*$/\\1/p' \"/sys/kernel/sched_ext/root/ops\")
+\tfi
+fi
+"""
+new = """# Set defaults as none
+SCX=\"none\"
+SCX_VERSION=\"\"
+SCX_BIN_VERSION=\"\"
+# update if we find them below
+
+if [ -f \"/sys/kernel/sched_ext/root/ops\" ]; then
+\tTMP=$(cat \"/sys/kernel/sched_ext/root/ops\")
+\tif [ -n \"$TMP\" ]; then
+\t\tSCX=\"$TMP\"
+\t\tPARSED_NAME=$(printf '%s\\n' \"$TMP\" | sed -rn 's/^([[:alnum:]-]+)_.*/\\1/p')
+\t\tPARSED_VERSION=$(printf '%s\\n' \"$TMP\" | sed -rn 's/^[^0-9]*([0-9]+(\\.[0-9]+)+).*$/\\1/p')
+\t\t[ -n \"$PARSED_NAME\" ] && SCX=\"$PARSED_NAME\"
+\t\t[ -n \"$PARSED_VERSION\" ] && SCX_VERSION=\"$PARSED_VERSION\"
+\tfi
+fi
+
+if [ \"$SCX\" != \"none\" ] && [ -z \"$SCX_VERSION\" ]; then
+\tSCX_BIN=\"scx_${SCX}\"
+\tif command -v \"$SCX_BIN\" >/dev/null 2>&1; then
+\t\tSCX_BIN_VERSION=$($SCX_BIN --version 2>/dev/null | head -n 1)
+\t\tSCX_VERSION=$(printf '%s\\n' \"$SCX_BIN_VERSION\" | awk '{print $2}')
+\tfi
+fi
+"""
+if old not in text:
+    raise SystemExit(f"Could not find scheduler detection block in {path}")
+path.write_text(text.replace(old, new, 1), encoding="utf-8")
+PY
+    fi
+
     ok "Applied local compatibility patch to $CACHYOS_LOCAL_SCRIPT"
 }
 
