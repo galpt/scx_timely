@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# benchmark.sh — Baseline vs bpfland vs scx_timely comparison helpers.
+# benchmark.sh — Baseline vs cake vs bpfland vs scx_timely comparison helpers.
 
 set -euo pipefail
 
@@ -34,6 +34,7 @@ CACHYOS_LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/scx_timely/cachyos-bench
 CACHYOS_LOCAL_SCRIPT="$CACHYOS_LOCAL_DIR/cachyos-benchmarker"
 TIMELY_BIN=""
 BPFLAND_BIN=""
+CAKE_BIN=""
 INITIAL_SERVICE_ACTIVE=0
 RESTORE_NEEDED=0
 SUDO_KEEPALIVE_PID=""
@@ -48,8 +49,9 @@ Usage: ./benchmark.sh [options]
 
 Automate scheduler comparisons for:
   1. Baseline (no sched_ext scheduler)
-  2. scx_bpfland
-  3. scx_timely
+  2. scx_cake
+  3. scx_bpfland
+  4. scx_timely
 
 Suites:
   --suite mini      Use torvic9's Mini Benchmarker (default)
@@ -385,6 +387,22 @@ find_scheduler_binaries() {
         say "Install scx_bpfland first so the comparison can include the upstream baseline scheduler."
         exit 1
     }
+
+    for candidate in \
+        scx_cake \
+        /usr/bin/scx_cake \
+        /usr/local/bin/scx_cake
+    do
+        if [ -x "$candidate" ]; then
+            CAKE_BIN="$candidate"
+            break
+        fi
+    done
+    [ -n "$CAKE_BIN" ] || {
+        err "Could not find an executable scx_cake binary."
+        say "Install scx_cake first so the comparison can include the upstream scheduler."
+        exit 1
+    }
 }
 
 check_plot_deps() {
@@ -437,6 +455,7 @@ Install hints:
   - Mini Benchmarker helper: ./install_benchmark_deps.sh --mini-benchmarker --plotter
   - CachyOS helper         : ./install_benchmark_deps.sh --cachyos-benchmarker --plotter
   - local fetched helpers are searched under ~/.local/share/scx_timely/
+  - install scx_cake separately so the comparison can include the upstream scheduler
 EOF
 }
 
@@ -547,7 +566,7 @@ PY
 ensure_supported_scheduler_state() {
     local ops
     ops=$(current_sched_ext_ops || true)
-    if [ -n "$ops" ] && ! printf '%s' "$ops" | grep -Eqi 'timely|bpfland'; then
+    if [ -n "$ops" ] && ! printf '%s' "$ops" | grep -Eqi 'timely|bpfland|cake'; then
         err "Another sched_ext scheduler is active: $ops"
         say "Disable it first, then rerun benchmark.sh."
         exit 1
@@ -583,8 +602,24 @@ stop_all_schedulers() {
         say "Stopping running scx_bpfland processes"
         run_privileged pkill -x scx_bpfland || true
     fi
+    if pgrep -x scx_cake >/dev/null 2>&1; then
+        say "Stopping running scx_cake processes"
+        run_privileged pkill -x scx_cake || true
+    fi
     wait_for_scheduler_state timely inactive || true
     wait_for_scheduler_state bpfland inactive || true
+    wait_for_scheduler_state cake inactive || true
+}
+
+start_cake_manual() {
+    local runtime_log="$RESULTS_DIR/console/scx_cake.log"
+    say "Starting scx_cake"
+    CURRENT_RUNTIME_LOG="$runtime_log"
+    run_privileged env RUST_LOG=info "$CAKE_BIN" >"$runtime_log" 2>&1 &
+    wait_for_scheduler_state cake active || {
+        err "scx_cake did not become active."
+        exit 1
+    }
 }
 
 start_bpfland_manual() {
@@ -744,6 +779,10 @@ run_variant() {
             stop_all_schedulers
             CURRENT_RUNTIME_LOG=""
             ;;
+        cake)
+            stop_all_schedulers
+            start_cake_manual
+            ;;
         bpfland)
             stop_all_schedulers
             start_bpfland_manual
@@ -796,6 +835,7 @@ main() {
 
     say "Benchmark suite          : $BENCHMARK_LABEL"
     say "Benchmark command        : $BENCHMARK_CMD"
+    say "scx_cake binary          : $CAKE_BIN"
     say "scx_bpfland binary       : $BPFLAND_BIN"
     say "scx_timely binary        : $TIMELY_BIN"
     say "Work directory           : $WORKDIR"
@@ -805,6 +845,7 @@ main() {
     say "Power profile            : $POWER_PROFILE"
 
     run_variant "baseline" "$BASELINE_LABEL" baseline
+    run_variant "cake" "cake" cake
     run_variant "bpfland" "bpfland" bpfland
     run_variant "timely-${MODE}" "Timely (${MODE})" timely
 
