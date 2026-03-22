@@ -66,6 +66,8 @@ const volatile u64 timely_tlow_ns = 1ULL * NSEC_PER_MSEC;
 const volatile u64 timely_thigh_ns = 2ULL * NSEC_PER_MSEC;
 const volatile u32 timely_gain_min = 256U;
 const volatile u32 timely_gain_step = 32U;
+const volatile u32 timely_hai_threshold = 5U;
+const volatile u32 timely_hai_multiplier = 5U;
 const volatile u32 timely_backoff_high_fp = 960U;
 const volatile u32 timely_backoff_gradient_fp = 992U;
 const volatile u64 timely_gradient_margin_ns = 125ULL * NSEC_PER_USEC;
@@ -250,6 +252,7 @@ struct task_ctx {
 	u64 prev_avg_queue_delay;
 	s64 avg_queue_gradient;
 	u32 timely_gain_fp;
+	u32 timely_hai_streak;
 	u64 last_delay_sample_at;
 	u64 last_gain_update_at;
 	u64 last_enqueued_at;
@@ -772,13 +775,15 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		u64 control_interval = MAX(timely_control_interval_ns, 1);
 		u32 gain_min = MIN(MAX(timely_gain_min, 1), TIMELY_GAIN_ONE);
 		u32 gain_step = MAX(timely_gain_step, 1);
+		u32 hai_threshold = MAX(timely_hai_threshold, 1);
+		u32 hai_multiplier = MAX(timely_hai_multiplier, 1);
 		u32 backoff_high = MIN(MAX(timely_backoff_high_fp, 1), TIMELY_GAIN_ONE);
 		u32 backoff_gradient = MIN(MAX(timely_backoff_gradient_fp, 1), TIMELY_GAIN_ONE);
 		s64 gradient_margin = (s64)MAX(timely_gradient_margin_ns, 1);
 		s64 gradient = tctx->avg_queue_gradient;
 		u32 old_gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
 		u32 gain = old_gain;
-		u32 fast_gain_step = MIN(gain_step * 2, TIMELY_GAIN_ONE);
+		u32 fast_gain_step = MIN(gain_step * hai_multiplier, TIMELY_GAIN_ONE);
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 		bool gain_changed = false;
 
@@ -789,27 +794,42 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		}
 
 		if (tctx->avg_queue_delay > high_target) {
+			tctx->timely_hai_streak = 0;
 			gain = MAX((gain * backoff_high) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
 			gain_changed = true;
 		} else if (tctx->avg_queue_delay <= low_target) {
 			if (gradient < -gradient_margin) {
-				gain = MIN(gain + fast_gain_step, TIMELY_GAIN_ONE);
-				__sync_fetch_and_add(&nr_delay_fast_recovery_dispatches, 1);
+				if (tctx->timely_hai_streak < hai_threshold)
+					tctx->timely_hai_streak++;
+				if (tctx->timely_hai_streak >= hai_threshold) {
+					gain = MIN(gain + fast_gain_step, TIMELY_GAIN_ONE);
+					__sync_fetch_and_add(&nr_delay_fast_recovery_dispatches, 1);
+				} else {
+					gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
+					__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
+				}
 				gain_changed = true;
 			} else if (gradient <= 0) {
+				tctx->timely_hai_streak = 0;
 				gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
 				__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
 				gain_changed = true;
+			} else {
+				tctx->timely_hai_streak = 0;
 			}
 		} else if (gradient <= 0) {
+			tctx->timely_hai_streak = 0;
 			gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
 			__sync_fetch_and_add(&nr_delay_middle_add_dispatches, 1);
 			gain_changed = true;
 		} else if (gradient > gradient_margin) {
+			tctx->timely_hai_streak = 0;
 			gain = MAX((gain * backoff_gradient) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
 			gain_changed = true;
+		} else {
+			tctx->timely_hai_streak = 0;
 		}
 
 		gain_changed = gain_changed && gain != old_gain;

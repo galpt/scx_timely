@@ -24,6 +24,7 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - the built-in mode presets now expose explicit Timely `Tlow` / `Thigh` delay regions, which keeps the controller closer to the paper than the earlier `target / 2` simplification
 - the controller now also applies additive increases in the middle region when delay is not rising, and a faster additive recovery path when delay is safely below `Tlow` and still falling
 - saturated no-op increases at the gain ceiling are now ignored instead of being treated like real control updates, so the sampled controller state is less noisy under steady favorable conditions
+- the faster recovery path is now HAI-style instead of immediate: it activates only after several consecutive favorable low-delay samples, which is much closer to TIMELY than the previous one-sample shortcut
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
@@ -78,12 +79,14 @@ That said, the current tree is still experimental. If you need the safest choice
   - `--timely-thigh-us`
   - `--timely-gain-min-fp`
   - `--timely-gain-step-fp`
+  - `--timely-hai-threshold`
+  - `--timely-hai-multiplier`
   - `--timely-backoff-high-fp`
   - `--timely-backoff-gradient-fp`
   - `--timely-gradient-margin-us`
   - `--timely-control-interval-us`
 - delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past `Thigh`
-- when delay is safely below `Tlow` and clearly falling, the controller now uses a faster additive recovery step; when delay sits between `Tlow` and `Thigh` and is not rising, it still allows a regular additive increase instead of behaving like a one-way ratchet
+- when delay is safely below `Tlow` and clearly falling for several consecutive samples, the controller now switches into a faster HAI-style additive increase; when delay sits between `Tlow` and `Thigh` and is not rising, it still allows a regular additive increase instead of behaving like a one-way ratchet
 - gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design
 - a small minimum control interval also prevents the controller from retuning too quickly when new delay samples arrive in a tight burst
 

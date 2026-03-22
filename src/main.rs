@@ -59,6 +59,8 @@ const DEFAULT_TIMELY_TLOW_US: u64 = 1_000;
 const DEFAULT_TIMELY_THIGH_US: u64 = 2_000;
 const DEFAULT_TIMELY_GAIN_MIN_FP: u32 = 320;
 const DEFAULT_TIMELY_GAIN_STEP_FP: u32 = 64;
+const DEFAULT_TIMELY_HAI_THRESHOLD: u32 = 5;
+const DEFAULT_TIMELY_HAI_MULTIPLIER: u32 = 5;
 const DEFAULT_TIMELY_BACKOFF_HIGH_FP: u32 = 960;
 const DEFAULT_TIMELY_BACKOFF_GRADIENT_FP: u32 = 992;
 const DEFAULT_TIMELY_GRADIENT_MARGIN_US: u64 = 187;
@@ -81,6 +83,8 @@ struct EffectiveConfig {
     timely_thigh_us: u64,
     timely_gain_min_fp: u32,
     timely_gain_step_fp: u32,
+    timely_hai_threshold: u32,
+    timely_hai_multiplier: u32,
     timely_backoff_high_fp: u32,
     timely_backoff_gradient_fp: u32,
     timely_gradient_margin_us: u64,
@@ -108,6 +112,8 @@ impl EffectiveConfig {
                 timely_thigh_us: DEFAULT_TIMELY_THIGH_US,
                 timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
                 timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
+                timely_hai_threshold: DEFAULT_TIMELY_HAI_THRESHOLD,
+                timely_hai_multiplier: DEFAULT_TIMELY_HAI_MULTIPLIER,
                 timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
                 timely_backoff_gradient_fp: DEFAULT_TIMELY_BACKOFF_GRADIENT_FP,
                 timely_gradient_margin_us: DEFAULT_TIMELY_GRADIENT_MARGIN_US,
@@ -131,6 +137,8 @@ impl EffectiveConfig {
                 timely_thigh_us: 4_500,
                 timely_gain_min_fp: 320,
                 timely_gain_step_fp: 64,
+                timely_hai_threshold: DEFAULT_TIMELY_HAI_THRESHOLD,
+                timely_hai_multiplier: DEFAULT_TIMELY_HAI_MULTIPLIER,
                 timely_backoff_high_fp: 976,
                 timely_backoff_gradient_fp: 1000,
                 timely_gradient_margin_us: 500,
@@ -154,6 +162,8 @@ impl EffectiveConfig {
                 timely_thigh_us: 3_000,
                 timely_gain_min_fp: 256,
                 timely_gain_step_fp: 32,
+                timely_hai_threshold: DEFAULT_TIMELY_HAI_THRESHOLD,
+                timely_hai_multiplier: DEFAULT_TIMELY_HAI_MULTIPLIER,
                 timely_backoff_high_fp: 960,
                 timely_backoff_gradient_fp: 992,
                 timely_gradient_margin_us: 187,
@@ -194,6 +204,12 @@ impl EffectiveConfig {
         }
         if opts.timely_gain_step_fp != 0 {
             config.timely_gain_step_fp = opts.timely_gain_step_fp;
+        }
+        if opts.timely_hai_threshold != 0 {
+            config.timely_hai_threshold = opts.timely_hai_threshold;
+        }
+        if opts.timely_hai_multiplier != 0 {
+            config.timely_hai_multiplier = opts.timely_hai_multiplier;
         }
         if opts.timely_backoff_high_fp != 0 {
             config.timely_backoff_high_fp = opts.timely_backoff_high_fp;
@@ -340,6 +356,14 @@ struct Opts {
     /// Additive fixed-point gain recovery step (0 = mode default, 1024 = 1.0x).
     #[clap(long, default_value = "0")]
     timely_gain_step_fp: u32,
+
+    /// Consecutive favorable low-delay samples required before HAI activates (0 = mode default).
+    #[clap(long, default_value = "0")]
+    timely_hai_threshold: u32,
+
+    /// Additive multiplier applied while HAI is active (0 = mode default).
+    #[clap(long, default_value = "0")]
+    timely_hai_multiplier: u32,
 
     /// Multiplicative high-delay backoff factor in fixed-point form (0 = mode default, 1024 = 1.0x).
     #[clap(long, default_value = "0")]
@@ -545,11 +569,13 @@ impl<'a> Scheduler<'a> {
             config.cpufreq
         );
         info!(
-            "timely control: tlow_us={} thigh_us={} gain_min_fp={} gain_step_fp={} backoff_high_fp={} backoff_gradient_fp={} gradient_margin_us={} control_interval_us={}",
+            "timely control: tlow_us={} thigh_us={} gain_min_fp={} gain_step_fp={} hai_threshold={} hai_multiplier={} backoff_high_fp={} backoff_gradient_fp={} gradient_margin_us={} control_interval_us={}",
             config.timely_tlow_us,
             config.timely_thigh_us,
             config.timely_gain_min_fp,
             config.timely_gain_step_fp,
+            config.timely_hai_threshold,
+            config.timely_hai_multiplier,
             config.timely_backoff_high_fp,
             config.timely_backoff_gradient_fp,
             config.timely_gradient_margin_us,
@@ -593,6 +619,8 @@ impl<'a> Scheduler<'a> {
         rodata.timely_thigh_ns = config.timely_thigh_us * 1000;
         rodata.timely_gain_min = config.timely_gain_min_fp;
         rodata.timely_gain_step = config.timely_gain_step_fp;
+        rodata.timely_hai_threshold = config.timely_hai_threshold;
+        rodata.timely_hai_multiplier = config.timely_hai_multiplier;
         rodata.timely_backoff_high_fp = config.timely_backoff_high_fp;
         rodata.timely_backoff_gradient_fp = config.timely_backoff_gradient_fp;
         rodata.timely_gradient_margin_ns = config.timely_gradient_margin_us * 1000;
