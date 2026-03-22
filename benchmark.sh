@@ -44,6 +44,7 @@ BENCHMARK_LABEL="Mini Benchmarker"
 CURRENT_RUNTIME_LOG=""
 CURRENT_SCHEDULER_VERSION=""
 CURRENT_SCHEDULER_NAME=""
+CURRENT_BENCHMARK_PID=""
 
 usage() {
     cat <<EOF
@@ -973,7 +974,7 @@ run_benchmark_command() {
                 "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
         fi
     ' &
-    printf '%s\n' "$!"
+    CURRENT_BENCHMARK_PID="$!"
 }
 
 wait_for_benchmark_or_scheduler_exit() {
@@ -1044,7 +1045,8 @@ run_one_benchmark() {
     say "Running ${BENCHMARK_LABEL}: ${label} (run ${run_index}/${RUNS})"
     mkdir -p "$WORKDIR"
     console_log="$RESULTS_DIR/console/${run_name}.out"
-    bench_pid=$(run_benchmark_command "$run_name" "$cache_answer" "$console_log")
+    run_benchmark_command "$run_name" "$cache_answer" "$console_log"
+    bench_pid="$CURRENT_BENCHMARK_PID"
     wait_for_benchmark_or_scheduler_exit "$bench_pid" "$runtime_log" "$CURRENT_SCHEDULER_NAME" "$label"
 
     raw_log=$(find "$WORKDIR" -maxdepth 1 -type f -name "benchie_${run_name}_*.log" | sort | tail -n 1)
