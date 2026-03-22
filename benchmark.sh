@@ -522,6 +522,20 @@ ensure_results_path_writable() {
     fi
 }
 
+prune_empty_dirs() {
+    local root="$1"
+    [ -n "$root" ] || return 0
+    [ -d "$root" ] || return 0
+
+    find "$root" -depth -mindepth 1 -type d -empty -delete 2>/dev/null || true
+}
+
+cleanup_benchmark_artifacts() {
+    prune_empty_dirs "$WORKDIR"
+    prune_empty_dirs "$RESULTS_DIR"
+    prune_empty_dirs "$SCRIPT_DIR/benchmark-results"
+}
+
 print_install_hints() {
     cat <<'EOF'
 Install hints:
@@ -865,6 +879,7 @@ run_one_benchmark() {
         fi
     fi
     tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION" "$scheduler_metrics"
+    cleanup_benchmark_artifacts
     ok "Saved $(basename "$raw_log")"
 }
 
@@ -955,6 +970,8 @@ main() {
 
     "$PLOTTER_PYTHON" "$PLOTTER" "$RESULTS_DIR/tagged" \
         --title "${BENCHMARK_LABEL} Comparison (${MODE} mode)"
+
+    cleanup_benchmark_artifacts
 
     restore_initial_state
     RESTORE_NEEDED=0

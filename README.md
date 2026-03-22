@@ -70,6 +70,7 @@ Useful helper commands:
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
 > - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
+> - the benchmark runner now prunes empty leftover directories from the benchmark workdir and `benchmark-results/`, while keeping the final folders that still contain logs, charts, or CSV summaries
 > - generated charts and CSV summaries are written under `benchmark-results/`
 > - this is local-machine benchmarking, not a universal scheduler claim
 
