@@ -1165,13 +1165,18 @@ run_benchmark_command() {
     local cache_answer="$2"
     local console_log="$3"
     local max_tests="$4"
+    local max_tests_env=""
+
+    if [ "${max_tests:-0}" -gt 0 ]; then
+        max_tests_env="$max_tests"
+    fi
 
     BENCHMARK_CMD_PATH="$BENCHMARK_CMD" \
     WORKDIR_PATH="$WORKDIR" \
     CACHE_ANSWER="$cache_answer" \
     RUN_NAME="$run_name" \
     CONSOLE_LOG="$console_log" \
-    MAX_TESTS="$max_tests" \
+    MAX_TESTS="$max_tests_env" \
     SUITE_NAME="$SUITE" \
     BENCHMARK_LABEL_ENV="$BENCHMARK_LABEL" \
     setsid bash -lc '
