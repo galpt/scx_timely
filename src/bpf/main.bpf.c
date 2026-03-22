@@ -761,11 +761,16 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	if (tctx && timely_target_ns && tctx->avg_queue_delay &&
 	    tctx->last_delay_sample_at > tctx->last_gain_update_at) {
 		u64 low_target = MAX(timely_target_ns / 2, 1);
+		u64 control_interval = MAX(timely_target_ns / 4, 250ULL * NSEC_PER_USEC);
 		s64 gradient_margin = (s64)MAX(timely_target_ns / 16, 1);
 		s64 gradient = tctx->avg_queue_gradient;
 		u32 gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 		bool gain_changed = false;
+
+		if (tctx->last_gain_update_at &&
+		    tctx->last_delay_sample_at - tctx->last_gain_update_at < control_interval)
+			goto out;
 
 		if (tctx->avg_queue_delay > timely_target_ns) {
 			gain = MAX((gain * 7) / 8, TIMELY_GAIN_MIN);
@@ -787,7 +792,7 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 			tctx->timely_gain_fp = gain;
 
 		tctx->last_gain_update_at = tctx->last_delay_sample_at;
-
+out:
 		slice = MIN(MAX((slice * gain) / TIMELY_GAIN_ONE, min_slice), slice_max);
 	}
 
