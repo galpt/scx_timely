@@ -26,6 +26,7 @@ ADAPTIVE_SCOPE=1
 BENCHMARK_CMD="${BENCHMARK_CMD:-}"
 PLOTTER="$SCRIPT_DIR/mini_benchmarker_plot.py"
 PLOTTER_PYTHON="${PLOTTER_PYTHON:-python3}"
+TIMELY_EXTRA_ARGS=()
 RESULTS_DIR=""
 WORKDIR=""
 
@@ -71,6 +72,7 @@ Options:
   --results-dir DIR             Directory for copied logs, chart, and CSV summary
   --mode desktop|powersave|server
                                  scx_timely profile for the scheduler run (default: desktop)
+  --timely-arg VALUE             Extra argument passed through to scx_timely (repeatable)
   --runs N                      Number of repeated runs per variant (default: 1)
   --drop-caches                 Answer "yes" to the benchmark page-cache prompt
   --benchmark-cmd PATH          Path to the suite runner
@@ -101,6 +103,10 @@ while [ $# -gt 0 ]; do
             ;;
         --mode)
             MODE="$2"
+            shift 2
+            ;;
+        --timely-arg)
+            TIMELY_EXTRA_ARGS+=("$2")
             shift 2
             ;;
         --runs)
@@ -1025,7 +1031,7 @@ start_timely_manual() {
     local runtime_log="$RESULTS_DIR/console/scx_timely-${MODE}.log"
     say "Starting scx_timely in ${MODE} mode"
     CURRENT_RUNTIME_LOG="$runtime_log"
-    run_privileged env RUST_LOG=info "$TIMELY_BIN" --mode "$MODE" >"$runtime_log" 2>&1 &
+    run_privileged env RUST_LOG=info "$TIMELY_BIN" --mode "$MODE" "${TIMELY_EXTRA_ARGS[@]}" >"$runtime_log" 2>&1 &
     wait_for_scheduler_state timely active || {
         err "scx_timely did not become active."
         exit 1
@@ -1397,6 +1403,11 @@ main() {
     say "Work directory           : $WORKDIR"
     say "Results directory        : $RESULTS_DIR"
     say "Timely benchmark mode    : $MODE"
+    if [ "${#TIMELY_EXTRA_ARGS[@]}" -gt 0 ]; then
+        say "Timely extra args        : ${TIMELY_EXTRA_ARGS[*]}"
+    else
+        say "Timely extra args        : (none)"
+    fi
     say "Runs per variant         : $RUNS"
     say "Power profile            : $POWER_PROFILE"
     if [ "$ADAPTIVE_SCOPE" -eq 1 ]; then

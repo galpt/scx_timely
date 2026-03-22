@@ -107,6 +107,16 @@ The default `mini_benchmarker.sh` entrypoint is kept as a compatibility shortcut
 ./benchmark.sh --suite mini --mode desktop
 ```
 
+If you want to tune Timely during a benchmark run without editing the source tree, pass extra scheduler flags through the runner:
+
+```bash
+./benchmark.sh --suite mini --mode desktop \
+  --timely-arg --timely-control-interval-us \
+  --timely-arg 750 \
+  --timely-arg --timely-gain-step-fp \
+  --timely-arg 16
+```
+
 Useful helper commands:
 
 - `./benchmark.sh --suite mini --check-deps`
