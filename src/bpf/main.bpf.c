@@ -776,7 +776,8 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		u32 backoff_gradient = MIN(MAX(timely_backoff_gradient_fp, 1), TIMELY_GAIN_ONE);
 		s64 gradient_margin = (s64)MAX(timely_gradient_margin_ns, 1);
 		s64 gradient = tctx->avg_queue_gradient;
-		u32 gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
+		u32 old_gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
+		u32 gain = old_gain;
 		u32 fast_gain_step = MIN(gain_step * 2, TIMELY_GAIN_ONE);
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 		bool gain_changed = false;
@@ -810,6 +811,8 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
 			gain_changed = true;
 		}
+
+		gain_changed = gain_changed && gain != old_gain;
 
 		if (gain_changed)
 			tctx->timely_gain_fp = gain;

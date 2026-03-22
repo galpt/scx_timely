@@ -23,6 +23,7 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
 - the built-in mode presets now expose explicit Timely `Tlow` / `Thigh` delay regions, which keeps the controller closer to the paper than the earlier `target / 2` simplification
 - the controller now also applies additive increases in the middle region when delay is not rising, and a faster additive recovery path when delay is safely below `Tlow` and still falling
+- saturated no-op increases at the gain ceiling are now ignored instead of being treated like real control updates, so the sampled controller state is less noisy under steady favorable conditions
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
