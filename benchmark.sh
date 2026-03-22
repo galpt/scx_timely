@@ -43,6 +43,7 @@ POWER_PROFILE="unknown"
 BENCHMARK_LABEL="Mini Benchmarker"
 CURRENT_RUNTIME_LOG=""
 CURRENT_SCHEDULER_VERSION=""
+CURRENT_SCHEDULER_NAME=""
 
 usage() {
     cat <<EOF
@@ -851,8 +852,9 @@ tag_log_copy() {
     local scheduler_issue="$7"
     local scheduler_version="$8"
     local scheduler_metrics="$9"
+    local default_kernel="${10}"
 
-    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" "$scheduler_version" "$scheduler_metrics" <<'PY'
+    "$PLOTTER_PYTHON" - "$source_log" "$tagged_log" "$label" "$variant_slug" "$power_profile" "$scheduler_status" "$scheduler_issue" "$scheduler_version" "$scheduler_metrics" "$default_kernel" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -866,13 +868,29 @@ scheduler_status = sys.argv[6]
 scheduler_issue = sys.argv[7]
 scheduler_version = sys.argv[8]
 scheduler_metrics = sys.argv[9]
+default_kernel = sys.argv[10]
 text = source.read_text(encoding="utf-8", errors="replace")
+
+ansi_re = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+backspace_re = re.compile(r".\x08")
+
+while True:
+    cleaned = backspace_re.sub("", text)
+    if cleaned == text:
+        break
+    text = cleaned
+
+text = ansi_re.sub("", text).replace("\x08", "").replace("\r", "")
 match = re.search(r"Kernel:\s+(\S+)", text)
-if not match:
-    raise SystemExit(f"Could not find Kernel: line in {source}")
-kernel = match.group(1)
+if match:
+    kernel = match.group(1)
+else:
+    kernel = default_kernel
 tagged = f"Kernel: {kernel}__{variant}"
-text = re.sub(r"Kernel:\s+\S+", tagged, text, count=1)
+if match:
+    text = re.sub(r"Kernel:\s+\S+", tagged, text, count=1)
+else:
+    text = f"Kernel: {kernel}\n{text}"
 text += (
     f"\nBenchmark label: {label}\n"
     f"Original kernel: {kernel}\n"
@@ -924,6 +942,83 @@ detect_scheduler_metrics() {
     printf '%s\n' "$metrics"
 }
 
+stop_process_group() {
+    local leader_pid="$1"
+
+    kill -TERM -- "-$leader_pid" >/dev/null 2>&1 || true
+    sleep 1
+    kill -KILL -- "-$leader_pid" >/dev/null 2>&1 || true
+}
+
+run_benchmark_command() {
+    local run_name="$1"
+    local cache_answer="$2"
+    local console_log="$3"
+
+    BENCHMARK_CMD_PATH="$BENCHMARK_CMD" \
+    WORKDIR_PATH="$WORKDIR" \
+    CACHE_ANSWER="$cache_answer" \
+    RUN_NAME="$run_name" \
+    CONSOLE_LOG="$console_log" \
+    SUITE_NAME="$SUITE" \
+    BENCHMARK_LABEL_ENV="$BENCHMARK_LABEL" \
+    setsid bash -lc '
+        set -o pipefail
+        if [ "$SUITE_NAME" = "cachyos-quick" ]; then
+            printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
+                env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL_ENV" \
+                "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
+        else
+            printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
+                "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
+        fi
+    ' &
+    printf '%s\n' "$!"
+}
+
+wait_for_benchmark_or_scheduler_exit() {
+    local bench_pid="$1"
+    local runtime_log="$2"
+    local scheduler_name="$3"
+    local label="$4"
+    local stopped_early=0
+
+    if [ -n "$runtime_log" ] && [ -n "$scheduler_name" ]; then
+        while kill -0 "$bench_pid" >/dev/null 2>&1; do
+            local detected_status
+            local scheduler_status
+            local scheduler_issue
+
+            detected_status=$(detect_scheduler_status "$runtime_log")
+            scheduler_status=$(printf '%s\n' "$detected_status" | sed -n '1p')
+            scheduler_issue=$(printf '%s\n' "$detected_status" | sed -n '2p')
+
+            if [ "$scheduler_status" != "clean" ]; then
+                warn "${label} scheduler exited during benchmark run: ${scheduler_issue}"
+                stop_process_group "$bench_pid"
+                stopped_early=1
+                break
+            fi
+
+            sleep 1
+        done
+    fi
+
+    set +e
+    wait "$bench_pid"
+    local bench_rc=$?
+    set -e
+
+    if [ "$stopped_early" -eq 1 ]; then
+        return 0
+    fi
+
+    if [ "$bench_rc" -ne 0 ]; then
+        err "Benchmark command failed for ${label} (exit ${bench_rc})"
+        exit 1
+    fi
+}
+
 run_one_benchmark() {
     local variant_slug="$1"
     local label="$2"
@@ -937,6 +1032,8 @@ run_one_benchmark() {
     local scheduler_issue
     local scheduler_metrics
     local detected_status
+    local console_log
+    local bench_pid
 
     run_name="${variant_slug}_run$(printf '%02d' "$run_index")"
     cache_answer="n"
@@ -946,23 +1043,23 @@ run_one_benchmark() {
 
     say "Running ${BENCHMARK_LABEL}: ${label} (run ${run_index}/${RUNS})"
     mkdir -p "$WORKDIR"
-    if [ "$SUITE" = "cachyos-quick" ]; then
-        printf '%s\n%s\n' "$cache_answer" "$run_name" | \
-            env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL" \
-            "$BENCHMARK_CMD" "$WORKDIR" | tee "$RESULTS_DIR/console/${run_name}.out"
-    else
-        printf '%s\n%s\n' "$cache_answer" "$run_name" | \
-            "$BENCHMARK_CMD" "$WORKDIR" | tee "$RESULTS_DIR/console/${run_name}.out"
-    fi
+    console_log="$RESULTS_DIR/console/${run_name}.out"
+    bench_pid=$(run_benchmark_command "$run_name" "$cache_answer" "$console_log")
+    wait_for_benchmark_or_scheduler_exit "$bench_pid" "$runtime_log" "$CURRENT_SCHEDULER_NAME" "$label"
 
     raw_log=$(find "$WORKDIR" -maxdepth 1 -type f -name "benchie_${run_name}_*.log" | sort | tail -n 1)
-    [ -n "$raw_log" ] || {
-        err "Could not locate benchmark log for ${run_name}"
-        exit 1
-    }
+    if [ -z "$raw_log" ]; then
+        raw_log="$RESULTS_DIR/raw/${run_name}.console.log"
+        cp "$console_log" "$raw_log"
+    else
+        cp "$raw_log" "$RESULTS_DIR/raw/"
+    fi
 
-    cp "$raw_log" "$RESULTS_DIR/raw/"
     tagged_log="$RESULTS_DIR/tagged/$(basename "$raw_log")"
+    case "$tagged_log" in
+        *.log) ;;
+        *) tagged_log="${tagged_log}.log" ;;
+    esac
     scheduler_status="clean"
     scheduler_issue=""
     scheduler_metrics=""
@@ -975,7 +1072,7 @@ run_one_benchmark() {
             warn "${label} scheduler status: ${scheduler_status} (${scheduler_issue})"
         fi
     fi
-    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION" "$scheduler_metrics"
+    tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION" "$scheduler_metrics" "$(uname -sr)"
     cleanup_benchmark_artifacts
     ok "Saved $(basename "$raw_log")"
 }
@@ -991,20 +1088,24 @@ run_variant() {
             stop_all_schedulers
             CURRENT_RUNTIME_LOG=""
             CURRENT_SCHEDULER_VERSION=""
+            CURRENT_SCHEDULER_NAME=""
             ;;
         cake)
             stop_all_schedulers
             CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$CAKE_BIN")
+            CURRENT_SCHEDULER_NAME="cake"
             start_cake_manual
             ;;
         bpfland)
             stop_all_schedulers
             CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$BPFLAND_BIN")
+            CURRENT_SCHEDULER_NAME="bpfland"
             start_bpfland_manual
             ;;
         timely)
             stop_all_schedulers
             CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$TIMELY_BIN")
+            CURRENT_SCHEDULER_NAME="timely"
             start_timely_manual
             ;;
         *)

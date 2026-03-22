@@ -4,6 +4,13 @@
 
 The goal is to keep the base scheduler small and stable, then add TIMELY-inspired feedback control in measured steps without overcomplicating the scheduler's fast path.
 
+> [!IMPORTANT]
+> - this repository is still in an experimental stage
+> - the current code should be read as a measured `bpfland`-based starting point with a growing TIMELY-inspired control layer, not as a complete TIMELY implementation
+> - until the next published `scx_*` crate release catches up, this repo patches the upstream `sched-ext/scx` workspace at a fixed revision to stay aligned with the latest inherited `bpfland` base behavior
+> - future README claims should stay tied to measured behavior and local validation
+> - the install path is intentionally source-first for now; release-download automation can come later after the scheduler behavior settles
+
 ## Current Status
 
 - this repository currently starts from a renamed `scx_bpfland` scaffold
@@ -67,26 +74,18 @@ Useful helper commands:
 - `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
 - `./install_benchmark_deps.sh --remove-workdir`
 
-> [!IMPORTANT]
+> [!NOTE]
 > - all reported benchmark values are elapsed time in seconds, so lower is better
 > - all suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - `cachyos-quick` reuses the same cached assets and only runs the early RT-pressure-heavy subset, so it is useful as a faster screening loop before spending time on the full `cachyos` suite
 > - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
+> - scheduler-backed runs now stop as soon as the scheduler exits and immediately summarize the partial session instead of waiting for the rest of the benchmark script to finish
 > - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
 > - the benchmark runner now prunes empty leftover directories from the benchmark workdir and `benchmark-results/`, while keeping the final folders that still contain logs, charts, or CSV summaries
 > - benchmark metadata parsing now handles empty fields correctly, so baseline CSV/chart labels don't get shifted by blank scheduler-version or metrics lines
 > - generated charts and CSV summaries are written under `benchmark-results/`
 > - this is local-machine benchmarking, not a universal scheduler claim
-
-## Important Notes
-
-> [!IMPORTANT]
-> - this repository is still in an experimental stage
-> - the current code should be read as a measured `bpfland`-based starting point with a growing TIMELY-inspired control layer, not as a complete TIMELY implementation
-> - until the next published `scx_*` crate release catches up, this repo patches the upstream `sched-ext/scx` workspace at a fixed revision to stay aligned with the latest inherited `bpfland` base behavior
-> - future README claims should stay tied to measured behavior and local validation
-> - the install path is intentionally source-first for now; release-download automation can come later after the scheduler behavior settles
 
 ## Inspirations and References
 

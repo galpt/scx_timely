@@ -42,10 +42,21 @@ SCHEDULER_VERSION_PATTERN = re.compile(r"^Scheduler version:[ \t]*(.*)$", re.MUL
 SCHEDULER_STATUS_PATTERN = re.compile(r"^Scheduler status:[ \t]*(.*)$", re.MULTILINE)
 SCHEDULER_ISSUE_PATTERN = re.compile(r"^Scheduler issue:[ \t]*(.*)$", re.MULTILINE)
 SCHEDULER_METRICS_PATTERN = re.compile(r"^Scheduler metrics:[ \t]*(.*)$", re.MULTILINE)
+ANSI_PATTERN = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+BACKSPACE_PATTERN = re.compile(r".\x08")
+
+
+def sanitize_text(text: str) -> str:
+    while True:
+        cleaned = BACKSPACE_PATTERN.sub("", text)
+        if cleaned == text:
+            break
+        text = cleaned
+    return ANSI_PATTERN.sub("", text).replace("\x08", "").replace("\r", "")
 
 
 def parse_log(path: Path) -> tuple[str, str | None, str | None, str, str | None, str | None, dict[str, float]]:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = sanitize_text(path.read_text(encoding="utf-8", errors="replace"))
     label_match = LABEL_PATTERN.search(text)
     if label_match:
         label = label_match.group(1).strip()
