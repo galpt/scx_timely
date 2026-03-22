@@ -724,6 +724,9 @@ impl<'a> Scheduler<'a> {
             nr_delay_scaled_dispatches: bss_data.nr_delay_scaled_dispatches,
             nr_delay_gradient_dispatches: bss_data.nr_delay_gradient_dispatches,
             nr_delay_recovery_dispatches: bss_data.nr_delay_recovery_dispatches,
+            nr_delay_rate_limited_dispatches: bss_data.nr_delay_rate_limited_dispatches,
+            nr_gain_floor_dispatches: bss_data.nr_gain_floor_dispatches,
+            nr_gain_ceiling_dispatches: bss_data.nr_gain_ceiling_dispatches,
             nr_cpu_release_reenqueue: bss_data.nr_cpu_release_reenqueue,
         }
     }

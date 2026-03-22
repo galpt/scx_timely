@@ -122,7 +122,8 @@ const volatile u64 cpu_capacity[MAX_CPUS];
  */
 volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches,
 	     nr_delay_scaled_dispatches, nr_delay_gradient_dispatches,
-	     nr_delay_recovery_dispatches,
+	     nr_delay_recovery_dispatches, nr_delay_rate_limited_dispatches,
+	     nr_gain_floor_dispatches, nr_gain_ceiling_dispatches,
 	     nr_cpu_release_reenqueue;
 
 /*
@@ -769,8 +770,10 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		bool gain_changed = false;
 
 		if (tctx->last_gain_update_at &&
-		    tctx->last_delay_sample_at - tctx->last_gain_update_at < control_interval)
+		    tctx->last_delay_sample_at - tctx->last_gain_update_at < control_interval) {
+			__sync_fetch_and_add(&nr_delay_rate_limited_dispatches, 1);
 			goto out;
+		}
 
 		if (tctx->avg_queue_delay > timely_target_ns) {
 			gain = MAX((gain * 7) / 8, TIMELY_GAIN_MIN);
@@ -790,6 +793,10 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 
 		if (gain_changed)
 			tctx->timely_gain_fp = gain;
+		if (gain_changed && gain == TIMELY_GAIN_MIN)
+			__sync_fetch_and_add(&nr_gain_floor_dispatches, 1);
+		if (gain_changed && gain == TIMELY_GAIN_ONE)
+			__sync_fetch_and_add(&nr_gain_ceiling_dispatches, 1);
 
 		tctx->last_gain_update_at = tctx->last_delay_sample_at;
 out:
