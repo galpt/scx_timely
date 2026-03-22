@@ -17,6 +17,7 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 - the current tree temporarily tracks a newer upstream `sched-ext/scx` revision for the `scx_*` helper crates so Timely stays aligned with recent `bpfland` base changes such as `SCX_ENQ_IMMED` compatibility support before the next crates.io release lands
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
 - a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses a stateful low/high-delay controller to recover additively and back off multiplicatively
+- controller updates are now gated on fresh enqueue-to-run delay samples, so Timely does not keep reapplying the same control decision across repeated dispatches without new feedback
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
 
@@ -36,6 +37,7 @@ The intended direction is:
 - all three modes also set a queue-delay target that the scheduler uses for the TIMELY-style control loop
 - delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past the target
 - when delay is both low and clearly falling again, the controller restores slice budget additively instead of behaving like a one-way ratchet
+- gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design
 
 ## Install
 

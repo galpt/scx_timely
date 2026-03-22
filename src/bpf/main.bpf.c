@@ -241,6 +241,8 @@ struct task_ctx {
 	u64 prev_avg_queue_delay;
 	s64 avg_queue_gradient;
 	u32 timely_gain_fp;
+	u64 last_delay_sample_at;
+	u64 last_gain_update_at;
 	u64 last_enqueued_at;
 	u64 last_run_at;
 	u64 wakeup_freq;
@@ -756,7 +758,8 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	 * This keeps the scheduler close to the inherited bpfland fast path while
 	 * making the control loop more faithful to TIMELY's low/high delay regions.
 	 */
-	if (tctx && timely_target_ns && tctx->avg_queue_delay) {
+	if (tctx && timely_target_ns && tctx->avg_queue_delay &&
+	    tctx->last_delay_sample_at > tctx->last_gain_update_at) {
 		u64 low_target = MAX(timely_target_ns / 2, 1);
 		s64 gradient_margin = (s64)MAX(timely_target_ns / 16, 1);
 		s64 gradient = tctx->avg_queue_gradient;
@@ -780,9 +783,10 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 			gain_changed = true;
 		}
 
-		if (gain_changed) {
+		if (gain_changed)
 			tctx->timely_gain_fp = gain;
-		}
+
+		tctx->last_gain_update_at = tctx->last_delay_sample_at;
 
 		slice = MIN(MAX((slice * gain) / TIMELY_GAIN_ONE, min_slice), slice_max);
 	}
@@ -1141,6 +1145,7 @@ void BPF_STRUCT_OPS(timely_running, struct task_struct *p)
 		gradient = (s64)tctx->avg_queue_delay - (s64)prev_avg;
 		tctx->avg_queue_gradient =
 			calc_avg_s64(tctx->avg_queue_gradient, gradient);
+		tctx->last_delay_sample_at = tctx->last_run_at;
 		tctx->last_enqueued_at = 0;
 	}
 
