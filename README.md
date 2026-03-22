@@ -13,19 +13,18 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 
 ## Current Status
 
-- this repository currently starts from a renamed `scx_bpfland` scaffold
-- scheduling behavior is still intentionally close to upstream `scx_bpfland`
+- this repository starts from a renamed `scx_bpfland` scaffold, and scheduling behavior is still intentionally close to upstream `scx_bpfland`
 - the current tree temporarily tracks a newer upstream `sched-ext/scx` revision for the `scx_*` helper crates so Timely stays aligned with recent `bpfland` base changes such as `SCX_ENQ_IMMED` compatibility support before the next crates.io release lands
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
 - a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses a stateful low/high-delay controller to recover additively and back off multiplicatively
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
-- recent local `cachyos` benchmark runs still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
+- recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
 
 ## Design Direction
 
 The intended direction is:
 
-- preserve a BPF-first fast path and proven liveness behavior
+- preserve a BPF-first fast path and stay close to upstream `bpfland`'s base liveness model
 - add a narrow control layer inspired by the TIMELY paper
 - expose profile tuning such as `desktop`, `powersave`, and `server` as parameter changes rather than separate scheduler architectures
 
@@ -79,7 +78,7 @@ Useful helper commands:
 > - all suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - `cachyos-quick` reuses the same cached assets and only runs the early RT-pressure-heavy subset, so it is useful as a faster screening loop before spending time on the full `cachyos` suite
-> - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
+> - scheduler versions and scheduler exits are recorded in tagged logs, CSV output, and chart labels, because completed timing output alone does not guarantee that a `sched_ext` run stayed clean
 > - scheduler-backed runs now stop as soon as the scheduler exits and immediately summarize the partial session instead of waiting for the rest of the benchmark script to finish
 > - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
 > - the benchmark runner now prunes empty leftover directories from the benchmark workdir and `benchmark-results/`, while keeping the final folders that still contain logs, charts, or CSV summaries
