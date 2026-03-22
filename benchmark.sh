@@ -965,6 +965,7 @@ run_one_benchmark() {
     tagged_log="$RESULTS_DIR/tagged/$(basename "$raw_log")"
     scheduler_status="clean"
     scheduler_issue=""
+    scheduler_metrics=""
     if [ -n "$runtime_log" ]; then
         detected_status=$(detect_scheduler_status "$runtime_log")
         scheduler_status=$(printf '%s\n' "$detected_status" | sed -n '1p')
