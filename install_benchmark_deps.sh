@@ -242,6 +242,94 @@ path.write_text(text.replace(old, new, 1), encoding="utf-8")
 PY
     fi
 
+    if ! grep -q 'CB_QUICK_MODE=' "$CACHYOS_LOCAL_SCRIPT"; then
+        say "Patching CachyOS benchmarker for quick RT-pressure screening mode"
+        python3 - "$CACHYOS_LOCAL_SCRIPT" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+old_vars = """VER="v2.2"
+FFMPEGVER="7.0.1"
+YCRUNCHER_VER="0.8.6.9545"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.14.7"
+"""
+
+new_vars = """VER="v2.2"
+FFMPEGVER="7.0.1"
+YCRUNCHER_VER="0.8.6.9545"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.14.7"
+CB_QUICK_MODE="${CB_QUICK_MODE:-0}"
+CB_QUICK_LABEL="${CB_QUICK_LABEL:-CachyOS Quick RT Bench}"
+"""
+
+old_run = """# run
+NRTESTS=12
+declare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+checkfiles && checksys && header || exit 8
+runstress && sleep 2 || exit 8
+runyc && sleep 2 || exit 8
+runperf_sch && sleep 2 || exit 8
+runperf_mem && sleep 2 || exit 8
+runnamd && sleep 2 || exit 8
+runprime && sleep 2 || exit 8
+runargon && sleep 2 || exit 8
+runffm && sleep 2 || exit 8
+runxz && sleep 2 || exit 8
+runkern && sleep 2 || exit 8
+runblend && sleep 2 || exit 8
+runx265 && sleep 2 || exit 8
+"""
+
+new_run = """# run
+if [[ "$CB_QUICK_MODE" = "1" ]]; then
+\techo -e "\\n${TB}${CB_QUICK_LABEL}:${TN} running the early RT-pressure-heavy subset only.\\n"
+\tNRTESTS=5
+\tdeclare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.95)
+else
+\tNRTESTS=12
+\tdeclare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+fi
+checkfiles && checksys && header || exit 8
+runstress && sleep 2 || exit 8
+runyc && sleep 2 || exit 8
+runperf_sch && sleep 2 || exit 8
+runperf_mem && sleep 2 || exit 8
+runnamd && sleep 2 || exit 8
+if [[ "$CB_QUICK_MODE" != "1" ]]; then
+\trunprime && sleep 2 || exit 8
+\trunargon && sleep 2 || exit 8
+\trunffm && sleep 2 || exit 8
+\trunxz && sleep 2 || exit 8
+\trunkern && sleep 2 || exit 8
+\trunblend && sleep 2 || exit 8
+\trunx265 && sleep 2 || exit 8
+fi
+"""
+
+if old_vars not in text:
+    raise SystemExit(f"Could not find benchmark variable block in {path}")
+if old_run not in text:
+    raise SystemExit(f"Could not find benchmark run block in {path}")
+
+text = text.replace(old_vars, new_vars, 1)
+text = text.replace(old_run, new_run, 1)
+path.write_text(text, encoding="utf-8")
+PY
+    fi
+
     ok "Applied local compatibility patch to $CACHYOS_LOCAL_SCRIPT"
 }
 

@@ -94,9 +94,8 @@ def parse_log(path: Path) -> tuple[str, str | None, str | None, str, str | None,
     for test_name, value in TEST_PATTERN.findall(text):
         values[test_name] = float(value)
 
-    missing = [name for name in TEST_ORDER if name not in values]
-    if missing:
-        raise ValueError(f"{path} is missing benchmark values: {', '.join(missing)}")
+    if not values:
+        raise ValueError(f"{path} does not contain any benchmark values")
 
     return (
         label,
@@ -111,6 +110,7 @@ def parse_log(path: Path) -> tuple[str, str | None, str | None, str, str | None,
 
 def aggregate_logs(log_dir: Path) -> tuple[
     list[str],
+    list[str],
     dict[str, dict[str, float]],
     dict[str, int],
     dict[str, str | None],
@@ -119,6 +119,7 @@ def aggregate_logs(log_dir: Path) -> tuple[
     dict[str, str | None],
     dict[str, str | None],
 ]:
+    ordered_tests = list(TEST_ORDER)
     grouped: dict[str, dict[str, list[float]]] = {}
     run_counts: dict[str, int] = {}
     power_profiles: dict[str, str | None] = {}
@@ -137,8 +138,9 @@ def aggregate_logs(log_dir: Path) -> tuple[
             scheduler_metric,
             values,
         ) = parse_log(path)
+        ordered_tests = [name for name in ordered_tests if name in values]
         if label not in grouped:
-            grouped[label] = {name: [] for name in TEST_ORDER}
+            grouped[label] = {name: [] for name in ordered_tests}
             run_counts[label] = 0
             power_profiles[label] = power_profile
             scheduler_versions[label] = scheduler_version
@@ -146,11 +148,13 @@ def aggregate_logs(log_dir: Path) -> tuple[
             scheduler_issues[label] = scheduler_issue
             scheduler_metrics[label] = scheduler_metric
         run_counts[label] += 1
-        for test_name in TEST_ORDER:
+        for test_name in ordered_tests:
             grouped[label][test_name].append(values[test_name])
 
     if not grouped:
         raise ValueError(f"No .log files found in {log_dir}")
+    if not ordered_tests:
+        raise ValueError(f"No shared benchmark values found in {log_dir}")
 
     labels = list(grouped.keys())
     averages = {
@@ -161,6 +165,7 @@ def aggregate_logs(log_dir: Path) -> tuple[
         for label in labels
     }
     return (
+        ordered_tests,
         labels,
         averages,
         run_counts,
@@ -174,6 +179,7 @@ def aggregate_logs(log_dir: Path) -> tuple[
 
 def write_csv(
     out_dir: Path,
+    tests: list[str],
     labels: list[str],
     averages: dict[str, dict[str, float]],
     run_counts: dict[str, int],
@@ -200,7 +206,7 @@ def write_csv(
             ]
         )
         for label in labels:
-            for test_name in TEST_ORDER:
+            for test_name in tests:
                 writer.writerow([
                     label,
                     power_profiles[label] or "",
@@ -226,6 +232,7 @@ def display_label(label: str, power_profile: str | None, scheduler_version: str 
 
 def render_chart(
     out_dir: Path,
+    tests: list[str],
     labels: list[str],
     averages: dict[str, dict[str, float]],
     power_profiles: dict[str, str | None],
@@ -233,7 +240,7 @@ def render_chart(
     scheduler_statuses: dict[str, str],
     title: str,
 ) -> None:
-    tests = list(reversed(TEST_ORDER))
+    tests = list(reversed(tests))
     series_count = len(labels)
     figure_height = max(8.0, len(tests) * 0.85 + series_count * 0.6)
     fig, ax = plt.subplots(figsize=(14, figure_height))
@@ -264,7 +271,7 @@ def render_chart(
     ax.set_yticks(positions)
     ax.set_yticklabels(tests)
     ax.set_xlabel("Average Time (s). Less is better")
-    ax.set_ylabel("Mini Benchmarker")
+    ax.set_ylabel("Benchmark")
     ax.set_title(title)
     ax.grid(axis="x", alpha=0.4)
     ax.legend(loc="lower right")
@@ -287,6 +294,7 @@ def main() -> int:
 
     log_dir = args.log_dir.resolve()
     (
+        tests,
         labels,
         averages,
         run_counts,
@@ -298,6 +306,7 @@ def main() -> int:
     ) = aggregate_logs(log_dir)
     write_csv(
         log_dir,
+        tests,
         labels,
         averages,
         run_counts,
@@ -307,7 +316,16 @@ def main() -> int:
         scheduler_issues,
         scheduler_metrics,
     )
-    render_chart(log_dir, labels, averages, power_profiles, scheduler_versions, scheduler_statuses, args.title)
+    render_chart(
+        log_dir,
+        tests,
+        labels,
+        averages,
+        power_profiles,
+        scheduler_versions,
+        scheduler_statuses,
+        args.title,
+    )
     print(f"Wrote chart and CSV summary to {log_dir}")
     return 0
 

@@ -46,10 +46,11 @@ sudo sh uninstall.sh --purge --force
 
 ## Benchmark Helpers
 
-For local scheduler comparisons, this repo ships one umbrella benchmark runner with two suites:
+For local scheduler comparisons, this repo ships one umbrella benchmark runner with three suites:
 
 - `mini`: torvic9's Mini Benchmarker
 - `cachyos`: the heavier CachyOS benchmark wrapper, but with local caching and cleaner script patching
+- `cachyos-quick`: a reduced CachyOS RT-pressure screening run that keeps the same early heavy section which has historically exposed scheduler exits faster than the full run
 
 The default `mini_benchmarker.sh` entrypoint is kept as a compatibility shortcut for the `mini` suite.
 
@@ -61,13 +62,15 @@ Useful helper commands:
 
 - `./benchmark.sh --suite mini --check-deps`
 - `./benchmark.sh --suite cachyos --check-deps`
+- `./benchmark.sh --suite cachyos-quick --check-deps`
 - `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
 - `./install_benchmark_deps.sh --remove-workdir`
 
 > [!IMPORTANT]
 > - all reported benchmark values are elapsed time in seconds, so lower is better
-> - both suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
+> - all suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
+> - `cachyos-quick` reuses the same cached assets and only runs the early RT-pressure-heavy subset, so it is useful as a faster screening loop before spending time on the full `cachyos` suite
 > - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
 > - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
 > - the benchmark runner now prunes empty leftover directories from the benchmark workdir and `benchmark-results/`, while keeping the final folders that still contain logs, charts, or CSV summaries

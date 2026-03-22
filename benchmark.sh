@@ -55,11 +55,13 @@ Automate scheduler comparisons for:
   4. scx_timely
 
 Suites:
-  --suite mini      Use torvic9's Mini Benchmarker (default)
-  --suite cachyos   Use CachyOS's heavier benchmark wrapper around the same test family
+  --suite mini           Use torvic9's Mini Benchmarker (default)
+  --suite cachyos        Use the full CachyOS benchmark wrapper
+  --suite cachyos-quick  Use a reduced CachyOS RT-pressure screening run
 
 Options:
-  --suite mini|cachyos          Benchmark suite to run
+  --suite mini|cachyos|cachyos-quick
+                                 Benchmark suite to run
   --workdir DIR                 Benchmark asset/work directory
   --results-dir DIR             Directory for copied logs, chart, and CSV summary
   --mode desktop|powersave|server
@@ -128,9 +130,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$SUITE" in
-    mini|cachyos) ;;
+    mini|cachyos|cachyos-quick) ;;
     *)
-        err "Unsupported suite '$SUITE'. Expected mini or cachyos."
+        err "Unsupported suite '$SUITE'. Expected mini, cachyos, or cachyos-quick."
         exit 1
         ;;
 esac
@@ -153,7 +155,7 @@ esac
 if [ -z "$WORKDIR" ]; then
     case "$SUITE" in
         mini) WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/mini-benchmarker-workdir" ;;
-        cachyos) WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/cachyos-benchmarker-workdir" ;;
+        cachyos|cachyos-quick) WORKDIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely/cachyos-benchmarker-workdir" ;;
     esac
 fi
 
@@ -164,6 +166,7 @@ fi
 case "$SUITE" in
     mini) BENCHMARK_LABEL="Mini Benchmarker" ;;
     cachyos) BENCHMARK_LABEL="CachyOS Benchmarker" ;;
+    cachyos-quick) BENCHMARK_LABEL="CachyOS Quick RT Bench" ;;
 esac
 
 run_privileged() {
@@ -317,11 +320,8 @@ done\
         sed -i 's#python /usr/bin/benchmark_scraper.py#[ -x /usr/bin/benchmark_scraper.py ] \&\& python /usr/bin/benchmark_scraper.py || true#' "$CACHYOS_LOCAL_SCRIPT"
     fi
 
-    if grep -q 'SCX_BIN_VERSION=' "$CACHYOS_LOCAL_SCRIPT"; then
-        return 0
-    fi
-
-    "$PLOTTER_PYTHON" - "$CACHYOS_LOCAL_SCRIPT" <<'PY'
+    if ! grep -q 'SCX_BIN_VERSION=' "$CACHYOS_LOCAL_SCRIPT"; then
+        "$PLOTTER_PYTHON" - "$CACHYOS_LOCAL_SCRIPT" <<'PY'
 from pathlib import Path
 import re
 import sys
@@ -370,6 +370,96 @@ if old not in text:
     raise SystemExit(f"Could not find scheduler detection block in {path}")
 path.write_text(text.replace(old, new, 1), encoding="utf-8")
 PY
+    fi
+
+    if grep -q 'CB_QUICK_MODE=' "$CACHYOS_LOCAL_SCRIPT"; then
+        return 0
+    fi
+
+    "$PLOTTER_PYTHON" - "$CACHYOS_LOCAL_SCRIPT" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+old_vars = """VER="v2.2"
+FFMPEGVER="7.0.1"
+YCRUNCHER_VER="0.8.6.9545"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.14.7"
+"""
+
+new_vars = """VER="v2.2"
+FFMPEGVER="7.0.1"
+YCRUNCHER_VER="0.8.6.9545"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.14.7"
+CB_QUICK_MODE="${CB_QUICK_MODE:-0}"
+CB_QUICK_LABEL="${CB_QUICK_LABEL:-CachyOS Quick RT Bench}"
+"""
+
+old_run = """# run
+NRTESTS=12
+declare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+checkfiles && checksys && header || exit 8
+runstress && sleep 2 || exit 8
+runyc && sleep 2 || exit 8
+runperf_sch && sleep 2 || exit 8
+runperf_mem && sleep 2 || exit 8
+runnamd && sleep 2 || exit 8
+runprime && sleep 2 || exit 8
+runargon && sleep 2 || exit 8
+runffm && sleep 2 || exit 8
+runxz && sleep 2 || exit 8
+runkern && sleep 2 || exit 8
+runblend && sleep 2 || exit 8
+runx265 && sleep 2 || exit 8
+"""
+
+new_run = """# run
+if [[ "$CB_QUICK_MODE" = "1" ]]; then
+\techo -e "\\n${TB}${CB_QUICK_LABEL}:${TN} running the early RT-pressure-heavy subset only.\\n"
+\tNRTESTS=5
+\tdeclare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.95)
+else
+\tNRTESTS=12
+\tdeclare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+fi
+checkfiles && checksys && header || exit 8
+runstress && sleep 2 || exit 8
+runyc && sleep 2 || exit 8
+runperf_sch && sleep 2 || exit 8
+runperf_mem && sleep 2 || exit 8
+runnamd && sleep 2 || exit 8
+if [[ "$CB_QUICK_MODE" != "1" ]]; then
+\trunprime && sleep 2 || exit 8
+\trunargon && sleep 2 || exit 8
+\trunffm && sleep 2 || exit 8
+\trunxz && sleep 2 || exit 8
+\trunkern && sleep 2 || exit 8
+\trunblend && sleep 2 || exit 8
+\trunx265 && sleep 2 || exit 8
+fi
+"""
+
+if old_vars not in text:
+    raise SystemExit(f"Could not find benchmark variable block in {path}")
+if old_run not in text:
+    raise SystemExit(f"Could not find benchmark run block in {path}")
+
+text = text.replace(old_vars, new_vars, 1)
+text = text.replace(old_run, new_run, 1)
+path.write_text(text, encoding="utf-8")
+PY
 }
 
 find_benchmark_runner() {
@@ -403,7 +493,7 @@ find_benchmark_runner() {
                 patch_local_mini_script
             fi
             ;;
-        cachyos)
+        cachyos|cachyos-quick)
             for candidate in "$CACHYOS_LOCAL_SCRIPT" cachyos-benchmarker; do
                 if command -v "$candidate" >/dev/null 2>&1; then
                     BENCHMARK_CMD=$(command -v "$candidate")
@@ -856,8 +946,14 @@ run_one_benchmark() {
 
     say "Running ${BENCHMARK_LABEL}: ${label} (run ${run_index}/${RUNS})"
     mkdir -p "$WORKDIR"
-    printf '%s\n%s\n' "$cache_answer" "$run_name" | \
-        "$BENCHMARK_CMD" "$WORKDIR" | tee "$RESULTS_DIR/console/${run_name}.out"
+    if [ "$SUITE" = "cachyos-quick" ]; then
+        printf '%s\n%s\n' "$cache_answer" "$run_name" | \
+            env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL" \
+            "$BENCHMARK_CMD" "$WORKDIR" | tee "$RESULTS_DIR/console/${run_name}.out"
+    else
+        printf '%s\n%s\n' "$cache_answer" "$run_name" | \
+            "$BENCHMARK_CMD" "$WORKDIR" | tee "$RESULTS_DIR/console/${run_name}.out"
+    fi
 
     raw_log=$(find "$WORKDIR" -maxdepth 1 -type f -name "benchie_${run_name}_*.log" | sort | tail -n 1)
     [ -n "$raw_log" ] || {
