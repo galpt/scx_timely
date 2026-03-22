@@ -29,6 +29,8 @@ pub struct Metrics {
     pub nr_delay_scaled_dispatches: u64,
     #[stat(desc = "Number of queue-delay-gradient slice reductions")]
     pub nr_delay_gradient_dispatches: u64,
+    #[stat(desc = "Number of queue-delay-driven slice recovery boosts")]
+    pub nr_delay_recovery_dispatches: u64,
     #[stat(desc = "Number of local-DSQ rescues triggered from cpu_release")]
     pub nr_cpu_release_reenqueue: u64,
 }
@@ -36,7 +38,7 @@ pub struct Metrics {
 impl Metrics {
     pub fn summary_line(&self) -> String {
         format!(
-            "tasks r={}/{} dispatch k={} d={} s={} q={} g={} rel={}",
+            "tasks r={}/{} dispatch k={} d={} s={} q={} g={} rec={} rel={}",
             self.nr_running,
             self.nr_cpus,
             self.nr_kthread_dispatches,
@@ -44,6 +46,7 @@ impl Metrics {
             self.nr_shared_dispatches,
             self.nr_delay_scaled_dispatches,
             self.nr_delay_gradient_dispatches,
+            self.nr_delay_recovery_dispatches,
             self.nr_cpu_release_reenqueue
         )
     }
@@ -51,7 +54,7 @@ impl Metrics {
     fn format<W: Write>(&self, w: &mut W) -> Result<()> {
         writeln!(
             w,
-            "[{}] tasks -> r: {:>2}/{:<2} | dispatch -> k: {:<5} d: {:<5} s: {:<5} q: {:<5} g: {:<5} rel: {:<5}",
+            "[{}] tasks -> r: {:>2}/{:<2} | dispatch -> k: {:<5} d: {:<5} s: {:<5} q: {:<5} g: {:<5} rec: {:<5} rel: {:<5}",
             crate::SCHEDULER_NAME,
             self.nr_running,
             self.nr_cpus,
@@ -60,6 +63,7 @@ impl Metrics {
             self.nr_shared_dispatches,
             self.nr_delay_scaled_dispatches,
             self.nr_delay_gradient_dispatches,
+            self.nr_delay_recovery_dispatches,
             self.nr_cpu_release_reenqueue
         )?;
         Ok(())
@@ -74,6 +78,8 @@ impl Metrics {
                 - rhs.nr_delay_scaled_dispatches,
             nr_delay_gradient_dispatches: self.nr_delay_gradient_dispatches
                 - rhs.nr_delay_gradient_dispatches,
+            nr_delay_recovery_dispatches: self.nr_delay_recovery_dispatches
+                - rhs.nr_delay_recovery_dispatches,
             nr_cpu_release_reenqueue: self.nr_cpu_release_reenqueue - rhs.nr_cpu_release_reenqueue,
             ..self.clone()
         }

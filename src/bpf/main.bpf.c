@@ -122,6 +122,7 @@ const volatile u64 cpu_capacity[MAX_CPUS];
  */
 volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches,
 	     nr_delay_scaled_dispatches, nr_delay_gradient_dispatches,
+	     nr_delay_recovery_dispatches,
 	     nr_cpu_release_reenqueue;
 
 /*
@@ -238,6 +239,7 @@ struct task_ctx {
 	u64 awake_vtime;
 	u64 avg_queue_delay;
 	u64 prev_avg_queue_delay;
+	s64 avg_queue_gradient;
 	u64 last_enqueued_at;
 	u64 last_run_at;
 	u64 wakeup_freq;
@@ -747,25 +749,36 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	 */
 	if (tctx && timely_target_ns && tctx->avg_queue_delay) {
 		u64 low_target = MAX(timely_target_ns / 2, 1);
-		u64 gradient_margin = MAX(timely_target_ns / 8, 1);
-		bool rising = tctx->avg_queue_delay >
-			      tctx->prev_avg_queue_delay + gradient_margin;
+		u64 recovery_target = MAX(timely_target_ns / 4, 1);
+		s64 gradient_margin = (s64)MAX(timely_target_ns / 16, 1);
+		s64 gradient = tctx->avg_queue_gradient;
+		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 		u64 scale_target = 0;
 
 		if (tctx->avg_queue_delay > timely_target_ns) {
 			scale_target = timely_target_ns;
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
-		} else if (rising && tctx->avg_queue_delay > low_target) {
+		} else if (gradient > gradient_margin &&
+			   tctx->avg_queue_delay > low_target) {
 			scale_target = low_target;
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
-			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
 		}
 
 		if (scale_target) {
-			u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 			u64 scaled = slice * scale_target / tctx->avg_queue_delay;
 
+			if (gradient > gradient_margin) {
+				scaled = MAX((scaled * 3) / 4, min_slice);
+				__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
+			}
+
 			slice = MAX(scaled, min_slice);
+		} else if (gradient < -gradient_margin &&
+			   tctx->avg_queue_delay < recovery_target) {
+			u64 recovered = MIN(slice + MAX(slice / 8, 1), slice_max);
+
+			slice = MAX(recovered, slice);
+			__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
 		}
 	}
 
@@ -832,6 +845,14 @@ static bool is_task_sticky(const struct task_ctx *tctx)
 static u64 calc_avg(u64 old_val, u64 new_val)
 {
 	return (old_val - (old_val >> 2)) + (new_val >> 2);
+}
+
+/*
+ * Signed EWMA variant used to smooth queue-delay gradients.
+ */
+static s64 calc_avg_s64(s64 old_val, s64 new_val)
+{
+	return ((old_val * 3) + new_val) / 4;
 }
 
 /*
@@ -1108,9 +1129,13 @@ void BPF_STRUCT_OPS(timely_running, struct task_struct *p)
 				    ? tctx->last_run_at - tctx->last_enqueued_at
 				    : 1;
 		u64 prev_avg = tctx->avg_queue_delay;
+		s64 gradient;
 
 		tctx->avg_queue_delay = calc_avg(tctx->avg_queue_delay, delay);
 		tctx->prev_avg_queue_delay = prev_avg;
+		gradient = (s64)tctx->avg_queue_delay - (s64)prev_avg;
+		tctx->avg_queue_gradient =
+			calc_avg_s64(tctx->avg_queue_gradient, gradient);
 		tctx->last_enqueued_at = 0;
 	}
 

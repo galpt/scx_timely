@@ -9,7 +9,7 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 - this repository currently starts from a renamed `scx_bpfland` scaffold
 - scheduling behavior is still intentionally close to upstream `scx_bpfland`
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
-- a small TIMELY-inspired control layer now measures queue delay and trims slice size when delay is high or climbing quickly above a lower guard rail
+- a small TIMELY-inspired control layer now measures queue delay, uses a smoothed delay gradient as an early signal, and gently restores slice budget when pressure falls back down
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local `cachyos` benchmark runs still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
 
@@ -28,6 +28,7 @@ The intended direction is:
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
 - all three modes also set a queue-delay target that the scheduler uses for mild TIMELY-style slice shaping
 - delay gradient is now used as an early warning signal, so slice trimming can start before queue delay fully blows past the target
+- when delay is low and falling, the control layer now recovers slice budget gradually instead of behaving like a one-way ratchet
 
 ## Install
 
@@ -68,7 +69,7 @@ Useful helper commands:
 > - both suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - scheduler versions and scheduler exits are now recorded in tagged logs, CSV output, and chart labels so completed benchmark output does not get mistaken for a clean run on the wrong binary
-> - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls or `cpu_release()` rescue path actually fired
+> - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
 > - generated charts and CSV summaries are written under `benchmark-results/`
 > - this is local-machine benchmarking, not a universal scheduler claim
 
