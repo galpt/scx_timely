@@ -19,6 +19,7 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses a stateful low/high-delay controller to recover additively and back off multiplicatively
 - controller updates are now gated on fresh enqueue-to-run delay samples and a small minimum control interval, so Timely does not keep reapplying control decisions too quickly during bursty feedback
 - the current controller constants now live in userspace-owned mode config instead of being hidden as BPF literals, which makes the control loop easier to inspect, tune, and explain
+- those controller constants can now also be overridden directly from the CLI, so controller calibration no longer requires editing source code for every experiment
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
@@ -65,6 +66,14 @@ That said, the current tree is still experimental. If you need the safest choice
 - `powersave` narrows the primary domain toward efficient cores and enables conservative throttling
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
 - all three modes also set a queue-delay target that the scheduler uses for the TIMELY-style control loop
+- advanced users can override the Timely controller knobs from the CLI without changing the source tree:
+  - `--delay-target-us`
+  - `--timely-gain-min-fp`
+  - `--timely-gain-step-fp`
+  - `--timely-backoff-high-fp`
+  - `--timely-backoff-gradient-fp`
+  - `--timely-gradient-margin-us`
+  - `--timely-control-interval-us`
 - delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past the target
 - when delay is both low and clearly falling again, the controller restores slice budget additively instead of behaving like a one-way ratchet
 - gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design

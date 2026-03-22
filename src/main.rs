@@ -167,6 +167,27 @@ impl EffectiveConfig {
         if opts.slice_us_lag != DEFAULT_SLICE_US_LAG {
             config.slice_us_lag = opts.slice_us_lag;
         }
+        if opts.delay_target_us != 0 {
+            config.delay_target_us = opts.delay_target_us;
+        }
+        if opts.timely_gain_min_fp != 0 {
+            config.timely_gain_min_fp = opts.timely_gain_min_fp;
+        }
+        if opts.timely_gain_step_fp != 0 {
+            config.timely_gain_step_fp = opts.timely_gain_step_fp;
+        }
+        if opts.timely_backoff_high_fp != 0 {
+            config.timely_backoff_high_fp = opts.timely_backoff_high_fp;
+        }
+        if opts.timely_backoff_gradient_fp != 0 {
+            config.timely_backoff_gradient_fp = opts.timely_backoff_gradient_fp;
+        }
+        if opts.timely_gradient_margin_us != 0 {
+            config.timely_gradient_margin_us = opts.timely_gradient_margin_us;
+        }
+        if opts.timely_control_interval_us != 0 {
+            config.timely_control_interval_us = opts.timely_control_interval_us;
+        }
         if opts.throttle_us != DEFAULT_THROTTLE_US {
             config.throttle_us = opts.throttle_us;
         }
@@ -273,6 +294,34 @@ struct Opts {
     /// also make performance more "spikey".
     #[clap(short = 'l', long, default_value = "40000")]
     slice_us_lag: u64,
+
+    /// Queue-delay target used by the TIMELY-style controller in microseconds (0 = mode default).
+    #[clap(long, default_value = "0")]
+    delay_target_us: u64,
+
+    /// Minimum fixed-point Timely gain floor (0 = mode default, 1024 = 1.0x).
+    #[clap(long, default_value = "0")]
+    timely_gain_min_fp: u32,
+
+    /// Additive fixed-point gain recovery step (0 = mode default, 1024 = 1.0x).
+    #[clap(long, default_value = "0")]
+    timely_gain_step_fp: u32,
+
+    /// Multiplicative high-delay backoff factor in fixed-point form (0 = mode default, 1024 = 1.0x).
+    #[clap(long, default_value = "0")]
+    timely_backoff_high_fp: u32,
+
+    /// Multiplicative rising-gradient backoff factor in fixed-point form (0 = mode default, 1024 = 1.0x).
+    #[clap(long, default_value = "0")]
+    timely_backoff_gradient_fp: u32,
+
+    /// Delay-gradient trigger margin in microseconds (0 = mode default).
+    #[clap(long, default_value = "0")]
+    timely_gradient_margin_us: u64,
+
+    /// Minimum time between Timely control updates in microseconds (0 = mode default).
+    #[clap(long, default_value = "0")]
+    timely_control_interval_us: u64,
 
     /// Throttle the running CPUs by periodically injecting idle cycles.
     ///
