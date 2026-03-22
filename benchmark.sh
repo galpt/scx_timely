@@ -1183,15 +1183,15 @@ run_benchmark_command() {
         set -o pipefail
         if [ "$SUITE_NAME" = "mini" ]; then
             printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
-                env MB_MAX_TESTS="${MAX_TESTS:-0}" \
+                env MB_MAX_TESTS="$MAX_TESTS" \
                 "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
         elif [ "$SUITE_NAME" = "cachyos-quick" ]; then
             printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
-                env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL_ENV" CB_MAX_TESTS="${MAX_TESTS:-0}" \
+                env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL_ENV" CB_MAX_TESTS="$MAX_TESTS" \
                 "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
         else
             printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
-                env CB_MAX_TESTS="${MAX_TESTS:-0}" \
+                env CB_MAX_TESTS="$MAX_TESTS" \
                 "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
         fi
     ' &
