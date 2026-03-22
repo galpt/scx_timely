@@ -55,6 +55,13 @@ const DEFAULT_SLICE_US_LAG: u64 = 40000;
 const DEFAULT_THROTTLE_US: u64 = 0;
 const DEFAULT_IDLE_RESUME_US: i64 = -1;
 const DEFAULT_PRIMARY_DOMAIN: &str = "auto";
+const DEFAULT_TIMELY_DELAY_TARGET_US: u64 = 2_000;
+const DEFAULT_TIMELY_GAIN_MIN_FP: u32 = 320;
+const DEFAULT_TIMELY_GAIN_STEP_FP: u32 = 64;
+const DEFAULT_TIMELY_BACKOFF_HIGH_FP: u32 = 960;
+const DEFAULT_TIMELY_BACKOFF_GRADIENT_FP: u32 = 992;
+const DEFAULT_TIMELY_GRADIENT_MARGIN_US: u64 = 187;
+const DEFAULT_TIMELY_CONTROL_INTERVAL_US: u64 = 500;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum TimelyMode {
@@ -95,13 +102,13 @@ impl EffectiveConfig {
                 slice_us: DEFAULT_SLICE_US,
                 slice_min_us: DEFAULT_SLICE_MIN_US,
                 slice_us_lag: DEFAULT_SLICE_US_LAG,
-                delay_target_us: 2_000,
-                timely_gain_min_fp: 320,
-                timely_gain_step_fp: 64,
-                timely_backoff_high_fp: 960,
-                timely_backoff_gradient_fp: 992,
-                timely_gradient_margin_us: 187,
-                timely_control_interval_us: 500,
+                delay_target_us: DEFAULT_TIMELY_DELAY_TARGET_US,
+                timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
+                timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
+                timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
+                timely_backoff_gradient_fp: DEFAULT_TIMELY_BACKOFF_GRADIENT_FP,
+                timely_gradient_margin_us: DEFAULT_TIMELY_GRADIENT_MARGIN_US,
+                timely_control_interval_us: DEFAULT_TIMELY_CONTROL_INTERVAL_US,
                 throttle_us: DEFAULT_THROTTLE_US,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: DEFAULT_PRIMARY_DOMAIN.into(),
@@ -117,13 +124,13 @@ impl EffectiveConfig {
                 slice_us: 1500,
                 slice_min_us: 500,
                 slice_us_lag: 20000,
-                delay_target_us: 4_500,
-                timely_gain_min_fp: 320,
-                timely_gain_step_fp: 64,
-                timely_backoff_high_fp: 976,
-                timely_backoff_gradient_fp: 1000,
-                timely_gradient_margin_us: 500,
-                timely_control_interval_us: 750,
+                delay_target_us: DEFAULT_TIMELY_DELAY_TARGET_US,
+                timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
+                timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
+                timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
+                timely_backoff_gradient_fp: DEFAULT_TIMELY_BACKOFF_GRADIENT_FP,
+                timely_gradient_margin_us: DEFAULT_TIMELY_GRADIENT_MARGIN_US,
+                timely_control_interval_us: DEFAULT_TIMELY_CONTROL_INTERVAL_US,
                 throttle_us: 100,
                 idle_resume_us: 5000,
                 primary_domain: "powersave".into(),
@@ -139,13 +146,13 @@ impl EffectiveConfig {
                 slice_us: 2000,
                 slice_min_us: 250,
                 slice_us_lag: 80000,
-                delay_target_us: 3_000,
-                timely_gain_min_fp: 256,
-                timely_gain_step_fp: 32,
-                timely_backoff_high_fp: 960,
-                timely_backoff_gradient_fp: 992,
-                timely_gradient_margin_us: 187,
-                timely_control_interval_us: 750,
+                delay_target_us: DEFAULT_TIMELY_DELAY_TARGET_US,
+                timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
+                timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
+                timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
+                timely_backoff_gradient_fp: DEFAULT_TIMELY_BACKOFF_GRADIENT_FP,
+                timely_gradient_margin_us: DEFAULT_TIMELY_GRADIENT_MARGIN_US,
+                timely_control_interval_us: DEFAULT_TIMELY_CONTROL_INTERVAL_US,
                 throttle_us: 0,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: "all".into(),
