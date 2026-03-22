@@ -36,12 +36,12 @@ TEST_PATTERN = re.compile(
     re.MULTILINE,
 )
 KERNEL_PATTERN = re.compile(r"Kernel:\s+(\S+)")
-LABEL_PATTERN = re.compile(r"^Benchmark label:\s*(.*)$", re.MULTILINE)
-POWER_PROFILE_PATTERN = re.compile(r"^Power profile:\s*(.*)$", re.MULTILINE)
-SCHEDULER_VERSION_PATTERN = re.compile(r"^Scheduler version:\s*(.*)$", re.MULTILINE)
-SCHEDULER_STATUS_PATTERN = re.compile(r"^Scheduler status:\s*(.*)$", re.MULTILINE)
-SCHEDULER_ISSUE_PATTERN = re.compile(r"^Scheduler issue:\s*(.*)$", re.MULTILINE)
-SCHEDULER_METRICS_PATTERN = re.compile(r"^Scheduler metrics:\s*(.*)$", re.MULTILINE)
+LABEL_PATTERN = re.compile(r"^Benchmark label:[ \t]*(.*)$", re.MULTILINE)
+POWER_PROFILE_PATTERN = re.compile(r"^Power profile:[ \t]*(.*)$", re.MULTILINE)
+SCHEDULER_VERSION_PATTERN = re.compile(r"^Scheduler version:[ \t]*(.*)$", re.MULTILINE)
+SCHEDULER_STATUS_PATTERN = re.compile(r"^Scheduler status:[ \t]*(.*)$", re.MULTILINE)
+SCHEDULER_ISSUE_PATTERN = re.compile(r"^Scheduler issue:[ \t]*(.*)$", re.MULTILINE)
+SCHEDULER_METRICS_PATTERN = re.compile(r"^Scheduler metrics:[ \t]*(.*)$", re.MULTILINE)
 
 
 def parse_log(path: Path) -> tuple[str, str | None, str | None, str, str | None, str | None, dict[str, float]]:

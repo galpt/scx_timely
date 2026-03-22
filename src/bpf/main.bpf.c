@@ -240,6 +240,7 @@ struct task_ctx {
 	u64 avg_queue_delay;
 	u64 prev_avg_queue_delay;
 	s64 avg_queue_gradient;
+	u32 timely_gain_fp;
 	u64 last_enqueued_at;
 	u64 last_run_at;
 	u64 wakeup_freq;
@@ -726,6 +727,9 @@ static u64 task_dl(struct task_struct *p, s32 cpu, struct task_ctx *tctx)
  */
 static u64 task_slice(const struct task_struct *p, s32 cpu)
 {
+	const u32 TIMELY_GAIN_ONE = 1024U;
+	const u32 TIMELY_GAIN_MIN = 128U;
+	const u32 TIMELY_GAIN_STEP = 32U;
 	u64 nr_wait = scx_bpf_dsq_nr_queued(cpu_dsq(cpu)) +
 		      scx_bpf_dsq_nr_queued(node_dsq(cpu));
 	struct task_ctx *tctx = try_lookup_task_ctx(p);
@@ -740,46 +744,44 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	slice = MAX(slice, slice_min);
 
 	/*
-	 * Apply a TIMELY-inspired reduction when queue delay is elevated.
+	 * Apply a small TIMELY-style controller on top of the base slice.
 	 *
-	 * If delay is already above the target, scale against the configured
-	 * target. If delay is still below the target but is rising sharply above
-	 * a lower guard rail, scale earlier and more strongly to keep queue delay
-	 * from drifting upward unchecked.
+	 * We keep a per-task fixed-point gain:
+	 * - additive recovery while delay stays comfortably low
+	 * - multiplicative backoff once delay is high
+	 * - earlier multiplicative backoff if delay is not high yet but is rising
+	 *
+	 * This keeps the scheduler close to the inherited bpfland fast path while
+	 * making the control loop more faithful to TIMELY's low/high delay regions.
 	 */
 	if (tctx && timely_target_ns && tctx->avg_queue_delay) {
 		u64 low_target = MAX(timely_target_ns / 2, 1);
-		u64 recovery_target = MAX(timely_target_ns / 4, 1);
 		s64 gradient_margin = (s64)MAX(timely_target_ns / 16, 1);
 		s64 gradient = tctx->avg_queue_gradient;
+		u32 gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
-		u64 scale_target = 0;
+		bool gain_changed = false;
 
 		if (tctx->avg_queue_delay > timely_target_ns) {
-			scale_target = timely_target_ns;
+			gain = MAX((gain * 7) / 8, TIMELY_GAIN_MIN);
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
+			gain_changed = true;
 		} else if (gradient > gradient_margin &&
 			   tctx->avg_queue_delay > low_target) {
-			scale_target = low_target;
-			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
-		}
-
-		if (scale_target) {
-			u64 scaled = slice * scale_target / tctx->avg_queue_delay;
-
-			if (gradient > gradient_margin) {
-				scaled = MAX((scaled * 3) / 4, min_slice);
-				__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
-			}
-
-			slice = MAX(scaled, min_slice);
-		} else if (gradient < -gradient_margin &&
-			   tctx->avg_queue_delay < recovery_target) {
-			u64 recovered = MIN(slice + MAX(slice / 8, 1), slice_max);
-
-			slice = MAX(recovered, slice);
+			gain = MAX((gain * 15) / 16, TIMELY_GAIN_MIN);
+			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
+			gain_changed = true;
+		} else if (tctx->avg_queue_delay < low_target) {
+			gain = MIN(gain + TIMELY_GAIN_STEP, TIMELY_GAIN_ONE);
 			__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
+			gain_changed = true;
 		}
+
+		if (gain_changed) {
+			tctx->timely_gain_fp = gain;
+		}
+
+		slice = MIN(MAX((slice * gain) / TIMELY_GAIN_ONE, min_slice), slice_max);
 	}
 
 	return slice;
