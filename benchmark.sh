@@ -983,6 +983,17 @@ wait_for_scheduler_state() {
     return 1
 }
 
+wait_for_sched_ext_idle() {
+    local attempt
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if [ -z "$(current_sched_ext_ops || true)" ]; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 stop_all_schedulers() {
     if service_is_active; then
         say "Stopping scx.service"
@@ -1003,6 +1014,9 @@ stop_all_schedulers() {
     wait_for_scheduler_state timely inactive || true
     wait_for_scheduler_state bpfland inactive || true
     wait_for_scheduler_state cake inactive || true
+    if ! wait_for_sched_ext_idle; then
+        warn "sched_ext root/ops still reports: $(current_sched_ext_ops || true)"
+    fi
 }
 
 start_cake_manual() {
