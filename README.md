@@ -29,7 +29,7 @@ The intended direction is:
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
 - all three modes also set a queue-delay target that the scheduler uses for the TIMELY-style control loop
 - delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past the target
-- when delay stays in the low region, the controller now restores slice budget additively instead of behaving like a one-way ratchet
+- when delay is both low and clearly falling again, the controller restores slice budget additively instead of behaving like a one-way ratchet
 
 ## Install
 

@@ -773,7 +773,8 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 			gain = MAX((gain * 15) / 16, TIMELY_GAIN_MIN);
 			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
 			gain_changed = true;
-		} else if (tctx->avg_queue_delay < low_target) {
+		} else if (tctx->avg_queue_delay < low_target &&
+			   gradient < -gradient_margin) {
 			gain = MIN(gain + TIMELY_GAIN_STEP, TIMELY_GAIN_ONE);
 			__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
 			gain_changed = true;
