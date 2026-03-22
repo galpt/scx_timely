@@ -44,6 +44,21 @@ Compared with other schedulers commonly listed in the [CachyOS `sched-ext` guide
 
 It is not yet the right scheduler to recommend as a general “best for everyone” pick. If you want a more established upstream scheduler today, `scx_cake`, `scx_bpfland`, `scx_lavd`, and the other schedulers documented by CachyOS are still the safer public recommendations.
 
+## Use Cases
+
+If you just want the short version, `scx_timely` is aimed at people who want one scheduler that tries to react to changing pressure instead of staying locked into one fixed behavior.
+
+It may be a reasonable fit if you care about:
+
+- gaming, where you want a system that tries to stay responsive when bursts of work show up
+- low-latency creative work such as audio editing, audio monitoring, or live content work, where responsiveness matters but background throughput still matters too
+- mixed desktop workloads, such as coding while a browser, music player, chat apps, and local builds are all active
+- source builds, media encoding, or other heavier work where you still want the machine to stay usable instead of feeling completely bogged down
+
+The intended idea is not “always maximize throughput” or “always minimize latency.” It is to let a feedback controller react to measured queue pressure and try to balance the two.
+
+That said, the current tree is still experimental. If you need the safest choice today, the more established upstream schedulers are still the better default recommendation.
+
 ## Modes
 
 - `desktop` keeps the baseline interactive profile and enables preferred idle scanning
