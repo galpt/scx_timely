@@ -29,11 +29,11 @@ pub struct Metrics {
     pub nr_delay_scaled_dispatches: u64,
     #[stat(desc = "Number of queue-delay-gradient slice reductions")]
     pub nr_delay_gradient_dispatches: u64,
-    #[stat(desc = "Number of queue-delay-driven slice recovery boosts")]
+    #[stat(desc = "Number of low-region additive Timely increases")]
     pub nr_delay_recovery_dispatches: u64,
     #[stat(desc = "Number of middle-region additive Timely increases")]
     pub nr_delay_middle_add_dispatches: u64,
-    #[stat(desc = "Number of low-region fast additive Timely increases")]
+    #[stat(desc = "Number of middle-region HAI Timely increases")]
     pub nr_delay_fast_recovery_dispatches: u64,
     #[stat(desc = "Number of fresh delay samples skipped by the minimum control interval")]
     pub nr_delay_rate_limited_dispatches: u64,

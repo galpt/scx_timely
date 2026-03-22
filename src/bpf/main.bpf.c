@@ -744,6 +744,14 @@ static u64 task_dl(struct task_struct *p, s32 cpu, struct task_ctx *tctx)
 static u64 task_slice(const struct task_struct *p, s32 cpu)
 {
 	const u32 TIMELY_GAIN_ONE = 1024U;
+	enum timely_action {
+		TIMELY_ACTION_NONE,
+		TIMELY_ACTION_HIGH_DEC,
+		TIMELY_ACTION_LOW_ADD,
+		TIMELY_ACTION_MID_ADD,
+		TIMELY_ACTION_MID_HAI,
+		TIMELY_ACTION_MID_DEC,
+	};
 	u64 nr_wait = scx_bpf_dsq_nr_queued(cpu_dsq(cpu)) +
 		      scx_bpf_dsq_nr_queued(node_dsq(cpu));
 	struct task_ctx *tctx = try_lookup_task_ctx(p);
@@ -761,9 +769,10 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	 * Apply a small TIMELY-style controller on top of the base slice.
 	 *
 	 * We keep a per-task fixed-point gain:
-	 * - additive recovery while delay stays comfortably low
-	 * - multiplicative backoff once delay is high
-	 * - earlier multiplicative backoff if delay is not high yet but is rising
+	 * - plain additive increase below Tlow
+	 * - multiplicative decrease above Thigh
+	 * - gradient tracking in the nominal Tlow..Thigh region, including
+	 *   HAI after several consecutive favorable samples
 	 *
 	 * This keeps the scheduler close to the inherited bpfland fast path while
 	 * making the control loop more faithful to TIMELY's low/high delay regions.
@@ -784,7 +793,9 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		u32 old_gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
 		u32 gain = old_gain;
 		u32 fast_gain_step = MIN(gain_step * hai_multiplier, TIMELY_GAIN_ONE);
+		u32 gradient_strength = TIMELY_GAIN_ONE - backoff_gradient;
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
+		u32 action = TIMELY_ACTION_NONE;
 		bool gain_changed = false;
 
 		if (tctx->last_gain_update_at &&
@@ -796,52 +807,78 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		if (tctx->avg_queue_delay > high_target) {
 			tctx->timely_hai_streak = 0;
 			gain = MAX((gain * backoff_high) / TIMELY_GAIN_ONE, gain_min);
-			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
-			gain_changed = true;
+			action = TIMELY_ACTION_HIGH_DEC;
 		} else if (tctx->avg_queue_delay <= low_target) {
+			tctx->timely_hai_streak = 0;
+			gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
+			action = TIMELY_ACTION_LOW_ADD;
+		} else {
+			/*
+			 * In the nominal Tlow..Thigh region, use the smoothed
+			 * queue-delay gradient as the control signal. Small
+			 * fluctuations inside +/-gradient_margin are treated as
+			 * a neutral band rather than strong evidence of change.
+			 *
+			 * As in TIMELY, a non-positive normalized gradient uses
+			 * additive increase, with HAI only after several
+			 * consecutive clearly favorable samples.
+			 */
 			if (gradient < -gradient_margin) {
 				if (tctx->timely_hai_streak < hai_threshold)
 					tctx->timely_hai_streak++;
 				if (tctx->timely_hai_streak >= hai_threshold) {
 					gain = MIN(gain + fast_gain_step, TIMELY_GAIN_ONE);
-					__sync_fetch_and_add(&nr_delay_fast_recovery_dispatches, 1);
+					action = TIMELY_ACTION_MID_HAI;
 				} else {
 					gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
-					__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
+					action = TIMELY_ACTION_MID_ADD;
 				}
-				gain_changed = true;
-			} else if (gradient <= 0) {
+			} else if (gradient <= gradient_margin) {
 				tctx->timely_hai_streak = 0;
 				gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
-				__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
-				gain_changed = true;
+				action = TIMELY_ACTION_MID_ADD;
 			} else {
+				u32 normalized_gradient = MIN(((u64)gradient * TIMELY_GAIN_ONE) /
+							     MAX(low_target, 1), TIMELY_GAIN_ONE);
+				u32 dec_factor = TIMELY_GAIN_ONE -
+						 ((gradient_strength * normalized_gradient) /
+						  TIMELY_GAIN_ONE);
 				tctx->timely_hai_streak = 0;
+				dec_factor = MIN(MAX(dec_factor, 1), TIMELY_GAIN_ONE);
+				gain = MAX((gain * dec_factor) / TIMELY_GAIN_ONE, gain_min);
+				action = TIMELY_ACTION_MID_DEC;
 			}
-		} else if (gradient <= 0) {
-			tctx->timely_hai_streak = 0;
-			gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
-			__sync_fetch_and_add(&nr_delay_middle_add_dispatches, 1);
-			gain_changed = true;
-		} else if (gradient > gradient_margin) {
-			tctx->timely_hai_streak = 0;
-			gain = MAX((gain * backoff_gradient) / TIMELY_GAIN_ONE, gain_min);
-			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
-			gain_changed = true;
-		} else {
-			tctx->timely_hai_streak = 0;
 		}
 
-		gain_changed = gain_changed && gain != old_gain;
+		gain_changed = action != TIMELY_ACTION_NONE && gain != old_gain;
 
-		if (gain_changed)
+		if (gain_changed) {
+			switch (action) {
+			case TIMELY_ACTION_HIGH_DEC:
+				__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
+				break;
+			case TIMELY_ACTION_LOW_ADD:
+				__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
+				break;
+			case TIMELY_ACTION_MID_ADD:
+				__sync_fetch_and_add(&nr_delay_middle_add_dispatches, 1);
+				break;
+			case TIMELY_ACTION_MID_HAI:
+				__sync_fetch_and_add(&nr_delay_fast_recovery_dispatches, 1);
+				break;
+			case TIMELY_ACTION_MID_DEC:
+				__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
+				break;
+			default:
+				break;
+			}
 			tctx->timely_gain_fp = gain;
+			tctx->last_gain_update_at = tctx->last_delay_sample_at;
+		}
 		if (gain_changed && gain == gain_min)
 			__sync_fetch_and_add(&nr_gain_floor_dispatches, 1);
 		if (gain_changed && gain == TIMELY_GAIN_ONE)
 			__sync_fetch_and_add(&nr_gain_ceiling_dispatches, 1);
-
-		tctx->last_gain_update_at = tctx->last_delay_sample_at;
 out:
 		slice = MIN(MAX((slice * gain) / TIMELY_GAIN_ONE, min_slice), slice_max);
 	}
