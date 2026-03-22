@@ -71,7 +71,7 @@ That said, the current tree is still experimental. If you need the safest choice
 - `desktop` keeps the baseline interactive profile and enables preferred idle scanning
 - the current built-in desktop tuning remains the most validated Timely profile so far
 - `powersave` narrows the primary domain toward efficient cores and enables conservative throttling
-- `powersave` now uses a wider Timely delay region together with more conservative `bpfland`-style policy knobs around primary domain, idle resume latency, throttling, and cpufreq
+- `powersave` now uses a wider Timely delay region together with a slower control interval and a smaller additive gain step, plus more conservative `bpfland`-style policy knobs around primary domain, idle resume latency, throttling, and cpufreq
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
 - `server` keeps a tighter delay region than powersave, but changes the surrounding policy knobs toward locality and per-CPU friendliness
 - all three modes set explicit Timely `Tlow` / `Thigh` thresholds for the controller
