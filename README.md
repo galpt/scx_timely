@@ -2,7 +2,7 @@
 
 `scx_timely` is a `sched_ext` CPU scheduler bootstrapped from upstream [`scx_bpfland`](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_bpfland).
 
-The goal is to keep the base scheduler small and stable, then add TIMELY-inspired feedback control in measured steps without overcomplicating the scheduler's fast path.
+The goal is to keep the base scheduler small and stable while adapting the TIMELY paper's feedback-driven low-latency / high-throughput idea to CPU scheduling in measured steps, without overcomplicating the scheduler's fast path.
 
 > [!IMPORTANT]
 > - this repository is still in an experimental stage
