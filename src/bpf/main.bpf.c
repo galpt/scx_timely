@@ -63,6 +63,12 @@ const volatile u64 slice_lag = 40ULL * NSEC_PER_MSEC;
  * observed queue delay drifts above the target.
  */
 const volatile u64 timely_target_ns = 2ULL * NSEC_PER_MSEC;
+const volatile u32 timely_gain_min = 256U;
+const volatile u32 timely_gain_step = 32U;
+const volatile u32 timely_backoff_high_fp = 960U;
+const volatile u32 timely_backoff_gradient_fp = 992U;
+const volatile u64 timely_gradient_margin_ns = 125ULL * NSEC_PER_USEC;
+const volatile u64 timely_control_interval_ns = 500ULL * NSEC_PER_USEC;
 
 /*
  * Ignore synchronous wakeup events.
@@ -733,8 +739,6 @@ static u64 task_dl(struct task_struct *p, s32 cpu, struct task_ctx *tctx)
 static u64 task_slice(const struct task_struct *p, s32 cpu)
 {
 	const u32 TIMELY_GAIN_ONE = 1024U;
-	const u32 TIMELY_GAIN_MIN = 256U;
-	const u32 TIMELY_GAIN_STEP = 32U;
 	u64 nr_wait = scx_bpf_dsq_nr_queued(cpu_dsq(cpu)) +
 		      scx_bpf_dsq_nr_queued(node_dsq(cpu));
 	struct task_ctx *tctx = try_lookup_task_ctx(p);
@@ -762,8 +766,12 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	if (tctx && timely_target_ns && tctx->avg_queue_delay &&
 	    tctx->last_delay_sample_at > tctx->last_gain_update_at) {
 		u64 low_target = MAX(timely_target_ns / 2, 1);
-		u64 control_interval = MAX(timely_target_ns / 4, 250ULL * NSEC_PER_USEC);
-		s64 gradient_margin = (s64)MAX(timely_target_ns / 16, 1);
+		u64 control_interval = MAX(timely_control_interval_ns, 1);
+		u32 gain_min = MIN(MAX(timely_gain_min, 1), TIMELY_GAIN_ONE);
+		u32 gain_step = MAX(timely_gain_step, 1);
+		u32 backoff_high = MIN(MAX(timely_backoff_high_fp, 1), TIMELY_GAIN_ONE);
+		u32 backoff_gradient = MIN(MAX(timely_backoff_gradient_fp, 1), TIMELY_GAIN_ONE);
+		s64 gradient_margin = (s64)MAX(timely_gradient_margin_ns, 1);
 		s64 gradient = tctx->avg_queue_gradient;
 		u32 gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
@@ -776,24 +784,24 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		}
 
 		if (tctx->avg_queue_delay > timely_target_ns) {
-			gain = MAX((gain * 15) / 16, TIMELY_GAIN_MIN);
+			gain = MAX((gain * backoff_high) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
 			gain_changed = true;
 		} else if (gradient > gradient_margin &&
 			   tctx->avg_queue_delay > low_target) {
-			gain = MAX((gain * 31) / 32, TIMELY_GAIN_MIN);
+			gain = MAX((gain * backoff_gradient) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
 			gain_changed = true;
 		} else if (tctx->avg_queue_delay < low_target &&
 			   gradient < -gradient_margin) {
-			gain = MIN(gain + TIMELY_GAIN_STEP, TIMELY_GAIN_ONE);
+			gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
 			__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
 			gain_changed = true;
 		}
 
 		if (gain_changed)
 			tctx->timely_gain_fp = gain;
-		if (gain_changed && gain == TIMELY_GAIN_MIN)
+		if (gain_changed && gain == gain_min)
 			__sync_fetch_and_add(&nr_gain_floor_dispatches, 1);
 		if (gain_changed && gain == TIMELY_GAIN_ONE)
 			__sync_fetch_and_add(&nr_gain_ceiling_dispatches, 1);

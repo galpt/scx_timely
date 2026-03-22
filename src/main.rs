@@ -70,6 +70,12 @@ struct EffectiveConfig {
     slice_min_us: u64,
     slice_us_lag: u64,
     delay_target_us: u64,
+    timely_gain_min_fp: u32,
+    timely_gain_step_fp: u32,
+    timely_backoff_high_fp: u32,
+    timely_backoff_gradient_fp: u32,
+    timely_gradient_margin_us: u64,
+    timely_control_interval_us: u64,
     throttle_us: u64,
     idle_resume_us: i64,
     primary_domain: String,
@@ -90,6 +96,12 @@ impl EffectiveConfig {
                 slice_min_us: DEFAULT_SLICE_MIN_US,
                 slice_us_lag: DEFAULT_SLICE_US_LAG,
                 delay_target_us: 2_000,
+                timely_gain_min_fp: 256,
+                timely_gain_step_fp: 32,
+                timely_backoff_high_fp: 960,
+                timely_backoff_gradient_fp: 992,
+                timely_gradient_margin_us: 125,
+                timely_control_interval_us: 500,
                 throttle_us: DEFAULT_THROTTLE_US,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: DEFAULT_PRIMARY_DOMAIN.into(),
@@ -106,6 +118,12 @@ impl EffectiveConfig {
                 slice_min_us: 500,
                 slice_us_lag: 20000,
                 delay_target_us: 4_000,
+                timely_gain_min_fp: 256,
+                timely_gain_step_fp: 32,
+                timely_backoff_high_fp: 960,
+                timely_backoff_gradient_fp: 992,
+                timely_gradient_margin_us: 250,
+                timely_control_interval_us: 1000,
                 throttle_us: 250,
                 idle_resume_us: 5000,
                 primary_domain: "powersave".into(),
@@ -122,6 +140,12 @@ impl EffectiveConfig {
                 slice_min_us: 250,
                 slice_us_lag: 80000,
                 delay_target_us: 3_000,
+                timely_gain_min_fp: 256,
+                timely_gain_step_fp: 32,
+                timely_backoff_high_fp: 960,
+                timely_backoff_gradient_fp: 992,
+                timely_gradient_margin_us: 187,
+                timely_control_interval_us: 750,
                 throttle_us: 0,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: "all".into(),
@@ -436,6 +460,15 @@ impl<'a> Scheduler<'a> {
             config.primary_domain,
             config.cpufreq
         );
+        info!(
+            "timely control: gain_min_fp={} gain_step_fp={} backoff_high_fp={} backoff_gradient_fp={} gradient_margin_us={} control_interval_us={}",
+            config.timely_gain_min_fp,
+            config.timely_gain_step_fp,
+            config.timely_backoff_high_fp,
+            config.timely_backoff_gradient_fp,
+            config.timely_gradient_margin_us,
+            config.timely_control_interval_us
+        );
 
         if config.idle_resume_us >= 0 {
             if !cpu_idle_resume_latency_supported() {
@@ -471,6 +504,12 @@ impl<'a> Scheduler<'a> {
         rodata.slice_min = config.slice_min_us * 1000;
         rodata.slice_lag = config.slice_us_lag * 1000;
         rodata.timely_target_ns = config.delay_target_us * 1000;
+        rodata.timely_gain_min = config.timely_gain_min_fp;
+        rodata.timely_gain_step = config.timely_gain_step_fp;
+        rodata.timely_backoff_high_fp = config.timely_backoff_high_fp;
+        rodata.timely_backoff_gradient_fp = config.timely_backoff_gradient_fp;
+        rodata.timely_gradient_margin_ns = config.timely_gradient_margin_us * 1000;
+        rodata.timely_control_interval_ns = config.timely_control_interval_us * 1000;
         rodata.throttle_ns = config.throttle_us * 1000;
         rodata.primary_all = domain.weight() == *NR_CPU_IDS;
 

@@ -18,6 +18,7 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
 - a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses a stateful low/high-delay controller to recover additively and back off multiplicatively
 - controller updates are now gated on fresh enqueue-to-run delay samples and a small minimum control interval, so Timely does not keep reapplying control decisions too quickly during bursty feedback
+- the current controller constants now live in userspace-owned mode config instead of being hidden as BPF literals, which makes the control loop easier to inspect, tune, and explain
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
@@ -30,6 +31,18 @@ The intended direction is:
 - preserve a BPF-first fast path and stay close to upstream `bpfland`'s base liveness model
 - add a narrow control layer inspired by the TIMELY paper
 - expose profile tuning such as `desktop`, `powersave`, and `server` as parameter changes rather than separate scheduler architectures
+
+## Where Timely Fits
+
+`scx_timely` is not trying to replace every `sched_ext` scheduler with one universal winner. The better way to read it is as a scheduler for people who specifically want a feedback-driven latency / throughput tradeoff instead of a more fixed scheduling policy.
+
+Compared with other schedulers commonly listed in the CachyOS `sched-ext` guide, Timely currently fits best as:
+
+- an experimental choice for people who want a `bpfland`-based scheduler with a more explicit feedback controller
+- a scheduler that tries to react to measured queue pressure, instead of relying only on static tiers, fixed profiles, or simpler direct-dispatch behavior
+- a useful option for benchmarking and controller experimentation when you want to see how delay-targeted tuning changes scheduler behavior
+
+It is not yet the right scheduler to recommend as a general “best for everyone” pick. If you want a more established upstream scheduler today, `scx_cake`, `scx_bpfland`, `scx_lavd`, and the other schedulers documented by CachyOS are still the safer public recommendations.
 
 ## Modes
 
