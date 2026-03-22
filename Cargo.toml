@@ -1,6 +1,6 @@
 [package]
 name = "scx_timely"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["scx_timely contributors"]
 edition = "2021"
 description = "A TIMELY-inspired sched_ext scheduler bootstrapped from scx_bpfland"
@@ -25,3 +25,9 @@ scx_cargo = "1.1.0"
 
 [features]
 enable_backtrace = []
+
+[patch.crates-io]
+scx_cargo = { git = "https://github.com/sched-ext/scx", rev = "f08bd875efd0f5f7089cc2cf06bb7fbdd24187e3" }
+scx_stats = { git = "https://github.com/sched-ext/scx", rev = "f08bd875efd0f5f7089cc2cf06bb7fbdd24187e3" }
+scx_stats_derive = { git = "https://github.com/sched-ext/scx", rev = "f08bd875efd0f5f7089cc2cf06bb7fbdd24187e3" }
+scx_utils = { git = "https://github.com/sched-ext/scx", rev = "f08bd875efd0f5f7089cc2cf06bb7fbdd24187e3" }

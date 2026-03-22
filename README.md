@@ -8,6 +8,7 @@ The goal is to keep the base scheduler small and stable, then add TIMELY-inspire
 
 - this repository currently starts from a renamed `scx_bpfland` scaffold
 - scheduling behavior is still intentionally close to upstream `scx_bpfland`
+- the current tree temporarily tracks a newer upstream `sched-ext/scx` revision for the `scx_*` helper crates so Timely stays aligned with recent `bpfland` base changes such as `SCX_ENQ_IMMED` compatibility support before the next crates.io release lands
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
 - a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses a stateful low/high-delay controller to recover additively and back off multiplicatively
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
@@ -83,6 +84,7 @@ Useful helper commands:
 > [!IMPORTANT]
 > - this repository is still in an experimental stage
 > - the current code should be read as a measured `bpfland`-based starting point with a growing TIMELY-inspired control layer, not as a complete TIMELY implementation
+> - until the next published `scx_*` crate release catches up, this repo patches the upstream `sched-ext/scx` workspace at a fixed revision to stay aligned with the latest inherited `bpfland` base behavior
 > - future README claims should stay tied to measured behavior and local validation
 > - the install path is intentionally source-first for now; release-download automation can come later after the scheduler behavior settles
 

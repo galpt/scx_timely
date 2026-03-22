@@ -592,10 +592,12 @@ static s32 pick_idle_cpu(struct task_struct *p, s32 prev_cpu, s32 this_cpu,
 	}
 
 	/*
-	 * Fallback to the old API if the running kernel doesn't expose the
-	 * weak scx_bpf_select_cpu_and() kfunc.
+	 * Fallback to the old API if the kernel doesn't support
+	 * scx_bpf_select_cpu_and().
+	 *
+	 * This is required to support kernels <= 6.16.
 	 */
-	if (!bpf_ksym_exists(scx_bpf_select_cpu_and)) {
+	if (!__COMPAT_HAS_scx_bpf_select_cpu_and) {
 		bool is_idle = false;
 
 		if (from_enqueue)
@@ -1020,7 +1022,7 @@ static bool consume_first_task(u64 dsq_id, struct task_struct *p)
 	if (!p)
 		return false;
 
-	return scx_bpf_dsq_move_to_local(dsq_id);
+	return scx_bpf_dsq_move_to_local(dsq_id, 0);
 }
 
 void BPF_STRUCT_OPS(timely_dispatch, s32 cpu, struct task_struct *prev)
