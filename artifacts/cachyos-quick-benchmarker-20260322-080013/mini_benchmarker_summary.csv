@@ -1,0 +1,29 @@
+label,power_profile,scheduler_version,scheduler_status,scheduler_issue,scheduler_metrics,runs,benchmark,mean_seconds
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,stress-ng cpu-cache-mem,16.75
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,y-cruncher pi 1b,43.62
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,perf sched msg fork thread,11.36
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,perf memcpy,11.59
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,namd 92K atoms,143.47
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,Total time (s),226.79
+Linux 6.19.7-1-cachyos,balanced,Scheduler status: clean,clean,Scheduler metrics:,,1,Total score,65.04
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,stress-ng cpu-cache-mem,16.85
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,y-cruncher pi 1b,43.61
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,perf sched msg fork thread,11.44
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,perf memcpy,11.91
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,namd 92K atoms,167.46
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,Total time (s),251.27
+bpfland,balanced,1.1.0-gc505008f x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),,1,Total score,67.61
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,stress-ng cpu-cache-mem,15.28
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,y-cruncher pi 1b,42.84
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,perf sched msg fork thread,38.70
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,perf memcpy,11.43
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,namd 92K atoms,172.03
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,Total time (s),280.28
+cake,balanced,1.1.0,exited,runnable task stall (kworker/10:0[2741123] failed to run for 30.297s),,1,Total score,84.07
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,stress-ng cpu-cache-mem,17.04
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,y-cruncher pi 1b,43.76
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,perf sched msg fork thread,12.10
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,perf memcpy,11.62
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,namd 92K atoms,185.26
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,Total time (s),269.78
+Timely (desktop),balanced,0.3.2 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=0 d=218086 s=214158 q=32268 g=15148 rec=1813 rel=38857,1,Total score,69.64
