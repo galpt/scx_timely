@@ -55,7 +55,8 @@ const DEFAULT_SLICE_US_LAG: u64 = 40000;
 const DEFAULT_THROTTLE_US: u64 = 0;
 const DEFAULT_IDLE_RESUME_US: i64 = -1;
 const DEFAULT_PRIMARY_DOMAIN: &str = "auto";
-const DEFAULT_TIMELY_DELAY_TARGET_US: u64 = 2_000;
+const DEFAULT_TIMELY_TLOW_US: u64 = 1_000;
+const DEFAULT_TIMELY_THIGH_US: u64 = 2_000;
 const DEFAULT_TIMELY_GAIN_MIN_FP: u32 = 320;
 const DEFAULT_TIMELY_GAIN_STEP_FP: u32 = 64;
 const DEFAULT_TIMELY_BACKOFF_HIGH_FP: u32 = 960;
@@ -76,7 +77,8 @@ struct EffectiveConfig {
     slice_us: u64,
     slice_min_us: u64,
     slice_us_lag: u64,
-    delay_target_us: u64,
+    timely_tlow_us: u64,
+    timely_thigh_us: u64,
     timely_gain_min_fp: u32,
     timely_gain_step_fp: u32,
     timely_backoff_high_fp: u32,
@@ -102,7 +104,8 @@ impl EffectiveConfig {
                 slice_us: DEFAULT_SLICE_US,
                 slice_min_us: DEFAULT_SLICE_MIN_US,
                 slice_us_lag: DEFAULT_SLICE_US_LAG,
-                delay_target_us: DEFAULT_TIMELY_DELAY_TARGET_US,
+                timely_tlow_us: DEFAULT_TIMELY_TLOW_US,
+                timely_thigh_us: DEFAULT_TIMELY_THIGH_US,
                 timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
                 timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
                 timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
@@ -124,13 +127,14 @@ impl EffectiveConfig {
                 slice_us: 1500,
                 slice_min_us: 500,
                 slice_us_lag: 20000,
-                delay_target_us: DEFAULT_TIMELY_DELAY_TARGET_US,
-                timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
-                timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
-                timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
-                timely_backoff_gradient_fp: DEFAULT_TIMELY_BACKOFF_GRADIENT_FP,
-                timely_gradient_margin_us: DEFAULT_TIMELY_GRADIENT_MARGIN_US,
-                timely_control_interval_us: DEFAULT_TIMELY_CONTROL_INTERVAL_US,
+                timely_tlow_us: 2_000,
+                timely_thigh_us: 4_500,
+                timely_gain_min_fp: 320,
+                timely_gain_step_fp: 64,
+                timely_backoff_high_fp: 976,
+                timely_backoff_gradient_fp: 1000,
+                timely_gradient_margin_us: 500,
+                timely_control_interval_us: 750,
                 throttle_us: 100,
                 idle_resume_us: 5000,
                 primary_domain: "powersave".into(),
@@ -146,13 +150,14 @@ impl EffectiveConfig {
                 slice_us: 2000,
                 slice_min_us: 250,
                 slice_us_lag: 80000,
-                delay_target_us: DEFAULT_TIMELY_DELAY_TARGET_US,
-                timely_gain_min_fp: DEFAULT_TIMELY_GAIN_MIN_FP,
-                timely_gain_step_fp: DEFAULT_TIMELY_GAIN_STEP_FP,
-                timely_backoff_high_fp: DEFAULT_TIMELY_BACKOFF_HIGH_FP,
-                timely_backoff_gradient_fp: DEFAULT_TIMELY_BACKOFF_GRADIENT_FP,
-                timely_gradient_margin_us: DEFAULT_TIMELY_GRADIENT_MARGIN_US,
-                timely_control_interval_us: DEFAULT_TIMELY_CONTROL_INTERVAL_US,
+                timely_tlow_us: 1_500,
+                timely_thigh_us: 3_000,
+                timely_gain_min_fp: 256,
+                timely_gain_step_fp: 32,
+                timely_backoff_high_fp: 960,
+                timely_backoff_gradient_fp: 992,
+                timely_gradient_margin_us: 187,
+                timely_control_interval_us: 750,
                 throttle_us: 0,
                 idle_resume_us: DEFAULT_IDLE_RESUME_US,
                 primary_domain: "all".into(),
@@ -175,7 +180,14 @@ impl EffectiveConfig {
             config.slice_us_lag = opts.slice_us_lag;
         }
         if opts.delay_target_us != 0 {
-            config.delay_target_us = opts.delay_target_us;
+            config.timely_thigh_us = opts.delay_target_us;
+            config.timely_tlow_us = std::cmp::max(opts.delay_target_us / 2, 1);
+        }
+        if opts.timely_tlow_us != 0 {
+            config.timely_tlow_us = opts.timely_tlow_us;
+        }
+        if opts.timely_thigh_us != 0 {
+            config.timely_thigh_us = opts.timely_thigh_us;
         }
         if opts.timely_gain_min_fp != 0 {
             config.timely_gain_min_fp = opts.timely_gain_min_fp;
@@ -203,6 +215,10 @@ impl EffectiveConfig {
         }
         if opts.primary_domain != DEFAULT_PRIMARY_DOMAIN {
             config.primary_domain = opts.primary_domain.clone();
+        }
+
+        if config.timely_tlow_us >= config.timely_thigh_us {
+            config.timely_tlow_us = std::cmp::max(config.timely_thigh_us / 2, 1);
         }
 
         config.preferred_idle_scan |= opts.preferred_idle_scan;
@@ -302,9 +318,20 @@ struct Opts {
     #[clap(short = 'l', long, default_value = "40000")]
     slice_us_lag: u64,
 
-    /// Queue-delay target used by the TIMELY-style controller in microseconds (0 = mode default).
+    /// Legacy shorthand for the TIMELY high-delay threshold in microseconds (0 = mode default).
+    ///
+    /// If set, this also resets the low-delay threshold to half of the provided value unless
+    /// --timely-tlow-us is explicitly provided.
     #[clap(long, default_value = "0")]
     delay_target_us: u64,
+
+    /// TIMELY low-delay threshold in microseconds (0 = mode default).
+    #[clap(long, default_value = "0")]
+    timely_tlow_us: u64,
+
+    /// TIMELY high-delay threshold in microseconds (0 = mode default).
+    #[clap(long, default_value = "0")]
+    timely_thigh_us: u64,
 
     /// Minimum fixed-point Timely gain floor (0 = mode default, 1024 = 1.0x).
     #[clap(long, default_value = "0")]
@@ -506,18 +533,21 @@ impl<'a> Scheduler<'a> {
             std::env::args().collect::<Vec<_>>().join(" ")
         );
         info!(
-            "mode={:?} slice_us={} slice_min_us={} slice_us_lag={} delay_target_us={} throttle_us={} primary_domain={} cpufreq={}",
+            "mode={:?} slice_us={} slice_min_us={} slice_us_lag={} timely_tlow_us={} timely_thigh_us={} throttle_us={} primary_domain={} cpufreq={}",
             config.mode,
             config.slice_us,
             config.slice_min_us,
             config.slice_us_lag,
-            config.delay_target_us,
+            config.timely_tlow_us,
+            config.timely_thigh_us,
             config.throttle_us,
             config.primary_domain,
             config.cpufreq
         );
         info!(
-            "timely control: gain_min_fp={} gain_step_fp={} backoff_high_fp={} backoff_gradient_fp={} gradient_margin_us={} control_interval_us={}",
+            "timely control: tlow_us={} thigh_us={} gain_min_fp={} gain_step_fp={} backoff_high_fp={} backoff_gradient_fp={} gradient_margin_us={} control_interval_us={}",
+            config.timely_tlow_us,
+            config.timely_thigh_us,
             config.timely_gain_min_fp,
             config.timely_gain_step_fp,
             config.timely_backoff_high_fp,
@@ -559,7 +589,8 @@ impl<'a> Scheduler<'a> {
         rodata.slice_max = config.slice_us * 1000;
         rodata.slice_min = config.slice_min_us * 1000;
         rodata.slice_lag = config.slice_us_lag * 1000;
-        rodata.timely_target_ns = config.delay_target_us * 1000;
+        rodata.timely_tlow_ns = config.timely_tlow_us * 1000;
+        rodata.timely_thigh_ns = config.timely_thigh_us * 1000;
         rodata.timely_gain_min = config.timely_gain_min_fp;
         rodata.timely_gain_step = config.timely_gain_step_fp;
         rodata.timely_backoff_high_fp = config.timely_backoff_high_fp;

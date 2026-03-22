@@ -16,12 +16,12 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - this repository starts from a renamed `scx_bpfland` scaffold, and scheduling behavior is still intentionally close to upstream `scx_bpfland`
 - the current tree temporarily tracks a newer upstream `sched-ext/scx` revision for the `scx_*` helper crates so Timely stays aligned with recent `bpfland` base changes such as `SCX_ENQ_IMMED` compatibility support before the next crates.io release lands
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
-- a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses a stateful low/high-delay controller to recover additively and back off multiplicatively
+- a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses explicit low/high-delay regions to recover additively and back off multiplicatively
 - controller updates are now gated on fresh enqueue-to-run delay samples and a small minimum control interval, so Timely does not keep reapplying control decisions too quickly during bursty feedback
 - the current controller constants now live in userspace-owned mode config instead of being hidden as BPF literals, which makes the control loop easier to inspect, tune, and explain
 - those controller constants can now also be overridden directly from the CLI, so controller calibration no longer requires editing source code for every experiment
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
-- all three built-in modes now share the same desktop-tuned Timely controller baseline, while differing mainly through `bpfland`-style policy knobs such as primary domain, throttling, cpufreq, and locality-oriented flags
+- the built-in mode presets now expose explicit Timely `Tlow` / `Thigh` delay regions, which keeps the controller closer to the paper than the earlier `target / 2` simplification
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
@@ -64,21 +64,23 @@ That said, the current tree is still experimental. If you need the safest choice
 ## Modes
 
 - `desktop` keeps the baseline interactive profile and enables preferred idle scanning
-- the current built-in desktop tuning is also the shared Timely controller baseline for the other modes
+- the current built-in desktop tuning remains the most validated Timely profile so far
 - `powersave` narrows the primary domain toward efficient cores and enables conservative throttling
-- `powersave` now keeps that same controller baseline, but applies more conservative `bpfland`-style policy knobs around primary domain, idle resume latency, throttling, and cpufreq
+- `powersave` now uses a wider Timely delay region together with more conservative `bpfland`-style policy knobs around primary domain, idle resume latency, throttling, and cpufreq
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
-- `server` also keeps the same controller baseline, but changes the surrounding policy knobs toward locality and per-CPU friendliness
-- all three modes also set a queue-delay target that the scheduler uses for the TIMELY-style control loop
+- `server` keeps a tighter delay region than powersave, but changes the surrounding policy knobs toward locality and per-CPU friendliness
+- all three modes set explicit Timely `Tlow` / `Thigh` thresholds for the controller
 - advanced users can override the Timely controller knobs from the CLI without changing the source tree:
-  - `--delay-target-us`
+  - `--delay-target-us` (legacy shorthand for `Thigh`)
+  - `--timely-tlow-us`
+  - `--timely-thigh-us`
   - `--timely-gain-min-fp`
   - `--timely-gain-step-fp`
   - `--timely-backoff-high-fp`
   - `--timely-backoff-gradient-fp`
   - `--timely-gradient-margin-us`
   - `--timely-control-interval-us`
-- delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past the target
+- delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past `Thigh`
 - when delay is both low and clearly falling again, the controller restores slice budget additively instead of behaving like a one-way ratchet
 - gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design
 - a small minimum control interval also prevents the controller from retuning too quickly when new delay samples arrive in a tight burst

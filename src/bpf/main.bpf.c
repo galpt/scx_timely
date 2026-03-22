@@ -59,10 +59,11 @@ const volatile u64 slice_min;
 const volatile u64 slice_lag = 40ULL * NSEC_PER_MSEC;
 
 /*
- * TIMELY-inspired queue delay target used to shape slice size when a task's
- * observed queue delay drifts above the target.
+ * TIMELY-inspired queue delay thresholds used to shape slice size when a
+ * task's observed queue delay drifts between low- and high-delay regions.
  */
-const volatile u64 timely_target_ns = 2ULL * NSEC_PER_MSEC;
+const volatile u64 timely_tlow_ns = 1ULL * NSEC_PER_MSEC;
+const volatile u64 timely_thigh_ns = 2ULL * NSEC_PER_MSEC;
 const volatile u32 timely_gain_min = 256U;
 const volatile u32 timely_gain_step = 32U;
 const volatile u32 timely_backoff_high_fp = 960U;
@@ -763,9 +764,10 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 	 * This keeps the scheduler close to the inherited bpfland fast path while
 	 * making the control loop more faithful to TIMELY's low/high delay regions.
 	 */
-	if (tctx && timely_target_ns && tctx->avg_queue_delay &&
+	if (tctx && timely_thigh_ns && tctx->avg_queue_delay &&
 	    tctx->last_delay_sample_at > tctx->last_gain_update_at) {
-		u64 low_target = MAX(timely_target_ns / 2, 1);
+		u64 low_target = MAX(timely_tlow_ns, 1);
+		u64 high_target = MAX(timely_thigh_ns, low_target + 1);
 		u64 control_interval = MAX(timely_control_interval_ns, 1);
 		u32 gain_min = MIN(MAX(timely_gain_min, 1), TIMELY_GAIN_ONE);
 		u32 gain_step = MAX(timely_gain_step, 1);
@@ -783,7 +785,7 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 			goto out;
 		}
 
-		if (tctx->avg_queue_delay > timely_target_ns) {
+		if (tctx->avg_queue_delay > high_target) {
 			gain = MAX((gain * backoff_high) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
 			gain_changed = true;
