@@ -733,7 +733,7 @@ static u64 task_dl(struct task_struct *p, s32 cpu, struct task_ctx *tctx)
 static u64 task_slice(const struct task_struct *p, s32 cpu)
 {
 	const u32 TIMELY_GAIN_ONE = 1024U;
-	const u32 TIMELY_GAIN_MIN = 128U;
+	const u32 TIMELY_GAIN_MIN = 256U;
 	const u32 TIMELY_GAIN_STEP = 32U;
 	u64 nr_wait = scx_bpf_dsq_nr_queued(cpu_dsq(cpu)) +
 		      scx_bpf_dsq_nr_queued(node_dsq(cpu));
@@ -776,12 +776,12 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		}
 
 		if (tctx->avg_queue_delay > timely_target_ns) {
-			gain = MAX((gain * 7) / 8, TIMELY_GAIN_MIN);
+			gain = MAX((gain * 15) / 16, TIMELY_GAIN_MIN);
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
 			gain_changed = true;
 		} else if (gradient > gradient_margin &&
 			   tctx->avg_queue_delay > low_target) {
-			gain = MAX((gain * 15) / 16, TIMELY_GAIN_MIN);
+			gain = MAX((gain * 31) / 32, TIMELY_GAIN_MIN);
 			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
 			gain_changed = true;
 		} else if (tctx->avg_queue_delay < low_target &&
