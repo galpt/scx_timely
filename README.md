@@ -36,7 +36,7 @@ The intended direction is:
 
 `scx_timely` is not trying to replace every `sched_ext` scheduler with one universal winner. The better way to read it is as a scheduler for people who specifically want a feedback-driven latency / throughput tradeoff instead of a more fixed scheduling policy.
 
-Compared with other schedulers commonly listed in the CachyOS `sched-ext` guide, Timely currently fits best as:
+Compared with other schedulers commonly listed in the [CachyOS `sched-ext` guide](https://wiki.cachyos.org/configuration/sched-ext/), Timely currently fits best as:
 
 - an experimental choice for people who want a `bpfland`-based scheduler with a more explicit feedback controller
 - a scheduler that tries to react to measured queue pressure, instead of relying only on static tiers, fixed profiles, or simpler direct-dispatch behavior
