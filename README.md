@@ -22,7 +22,7 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - those controller constants can now also be overridden directly from the CLI, so controller calibration no longer requires editing source code for every experiment
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
 - the built-in `desktop` profile now uses a higher gain floor, a stronger additive recovery step, and a less eager gradient trigger than earlier revisions, based on repeated local mini-benchmark tuning
-- the built-in `powersave` profile now uses a slightly higher gain floor, a somewhat stronger recovery step, and a slower / less eager gradient trigger so it stays conservative without remaining quite as sticky at the floor as before
+- the built-in `powersave` profile now also allows a larger delay budget, keeps a higher gain floor, and uses a gentler backoff curve so it stays conservative without remaining quite as sticky at the floor as before
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
@@ -67,7 +67,7 @@ That said, the current tree is still experimental. If you need the safest choice
 - `desktop` keeps the baseline interactive profile and enables preferred idle scanning
 - the current built-in desktop tuning favors recovering from pressure more decisively instead of collapsing into the gain floor as aggressively as earlier revisions did
 - `powersave` narrows the primary domain toward efficient cores and enables conservative throttling
-- the current built-in powersave tuning also uses a longer control interval and a wider gradient margin so short pressure spikes do not retune the controller too eagerly
+- the current built-in powersave tuning also tolerates more queue delay and uses a softer backoff curve, so it is less likely to get pinned near the minimum gain floor under sustained pressure
 - `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
 - all three modes also set a queue-delay target that the scheduler uses for the TIMELY-style control loop
 - advanced users can override the Timely controller knobs from the CLI without changing the source tree:
