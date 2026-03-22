@@ -129,7 +129,8 @@ const volatile u64 cpu_capacity[MAX_CPUS];
  */
 volatile u64 nr_kthread_dispatches, nr_direct_dispatches, nr_shared_dispatches,
 	     nr_delay_scaled_dispatches, nr_delay_gradient_dispatches,
-	     nr_delay_recovery_dispatches, nr_delay_rate_limited_dispatches,
+	     nr_delay_recovery_dispatches, nr_delay_middle_add_dispatches,
+	     nr_delay_fast_recovery_dispatches, nr_delay_rate_limited_dispatches,
 	     nr_gain_floor_dispatches, nr_gain_ceiling_dispatches,
 	     nr_cpu_release_reenqueue;
 
@@ -776,6 +777,7 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		s64 gradient_margin = (s64)MAX(timely_gradient_margin_ns, 1);
 		s64 gradient = tctx->avg_queue_gradient;
 		u32 gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
+		u32 fast_gain_step = MIN(gain_step * 2, TIMELY_GAIN_ONE);
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 		bool gain_changed = false;
 
@@ -789,15 +791,23 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 			gain = MAX((gain * backoff_high) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_scaled_dispatches, 1);
 			gain_changed = true;
-		} else if (gradient > gradient_margin &&
-			   tctx->avg_queue_delay > low_target) {
+		} else if (tctx->avg_queue_delay <= low_target) {
+			if (gradient < -gradient_margin) {
+				gain = MIN(gain + fast_gain_step, TIMELY_GAIN_ONE);
+				__sync_fetch_and_add(&nr_delay_fast_recovery_dispatches, 1);
+				gain_changed = true;
+			} else if (gradient <= 0) {
+				gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
+				__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
+				gain_changed = true;
+			}
+		} else if (gradient <= 0) {
+			gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
+			__sync_fetch_and_add(&nr_delay_middle_add_dispatches, 1);
+			gain_changed = true;
+		} else if (gradient > gradient_margin) {
 			gain = MAX((gain * backoff_gradient) / TIMELY_GAIN_ONE, gain_min);
 			__sync_fetch_and_add(&nr_delay_gradient_dispatches, 1);
-			gain_changed = true;
-		} else if (tctx->avg_queue_delay < low_target &&
-			   gradient < -gradient_margin) {
-			gain = MIN(gain + gain_step, TIMELY_GAIN_ONE);
-			__sync_fetch_and_add(&nr_delay_recovery_dispatches, 1);
 			gain_changed = true;
 		}
 

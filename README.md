@@ -16,12 +16,13 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - this repository starts from a renamed `scx_bpfland` scaffold, and scheduling behavior is still intentionally close to upstream `scx_bpfland`
 - the current tree temporarily tracks a newer upstream `sched-ext/scx` revision for the `scx_*` helper crates so Timely stays aligned with recent `bpfland` base changes such as `SCX_ENQ_IMMED` compatibility support before the next crates.io release lands
 - `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
-- a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses explicit low/high-delay regions to recover additively and back off multiplicatively
+- a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses explicit low/high-delay regions plus a middle-region update path to recover additively and back off multiplicatively
 - controller updates are now gated on fresh enqueue-to-run delay samples and a small minimum control interval, so Timely does not keep reapplying control decisions too quickly during bursty feedback
 - the current controller constants now live in userspace-owned mode config instead of being hidden as BPF literals, which makes the control loop easier to inspect, tune, and explain
 - those controller constants can now also be overridden directly from the CLI, so controller calibration no longer requires editing source code for every experiment
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
 - the built-in mode presets now expose explicit Timely `Tlow` / `Thigh` delay regions, which keeps the controller closer to the paper than the earlier `target / 2` simplification
+- the controller now also applies additive increases in the middle region when delay is not rising, and a faster additive recovery path when delay is safely below `Tlow` and still falling
 - scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
@@ -81,7 +82,7 @@ That said, the current tree is still experimental. If you need the safest choice
   - `--timely-gradient-margin-us`
   - `--timely-control-interval-us`
 - delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past `Thigh`
-- when delay is both low and clearly falling again, the controller restores slice budget additively instead of behaving like a one-way ratchet
+- when delay is safely below `Tlow` and clearly falling, the controller now uses a faster additive recovery step; when delay sits between `Tlow` and `Thigh` and is not rising, it still allows a regular additive increase instead of behaving like a one-way ratchet
 - gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design
 - a small minimum control interval also prevents the controller from retuning too quickly when new delay samples arrive in a tight burst
 
