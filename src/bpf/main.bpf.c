@@ -793,6 +793,7 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		u32 old_gain = tctx->timely_gain_fp ?: TIMELY_GAIN_ONE;
 		u32 gain = old_gain;
 		u32 fast_gain_step = MIN(gain_step * hai_multiplier, TIMELY_GAIN_ONE);
+		u32 high_strength = TIMELY_GAIN_ONE - backoff_high;
 		u32 gradient_strength = TIMELY_GAIN_ONE - backoff_gradient;
 		u64 min_slice = MAX(slice_min, MAX(slice_max / 8, 1));
 		u32 action = TIMELY_ACTION_NONE;
@@ -805,8 +806,15 @@ static u64 task_slice(const struct task_struct *p, s32 cpu)
 		}
 
 		if (tctx->avg_queue_delay > high_target) {
+			u32 overshoot = MIN(((tctx->avg_queue_delay - high_target) *
+					     TIMELY_GAIN_ONE) / tctx->avg_queue_delay,
+					    TIMELY_GAIN_ONE);
+			u32 dec_factor = TIMELY_GAIN_ONE -
+					 ((high_strength * overshoot) / TIMELY_GAIN_ONE);
+
 			tctx->timely_hai_streak = 0;
-			gain = MAX((gain * backoff_high) / TIMELY_GAIN_ONE, gain_min);
+			dec_factor = MIN(MAX(dec_factor, 1), TIMELY_GAIN_ONE);
+			gain = MAX((gain * dec_factor) / TIMELY_GAIN_ONE, gain_min);
 			action = TIMELY_ACTION_HIGH_DEC;
 		} else if (tctx->avg_queue_delay <= low_target) {
 			tctx->timely_hai_streak = 0;

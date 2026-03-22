@@ -23,6 +23,7 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
 - the built-in mode presets now expose explicit Timely `Tlow` / `Thigh` delay regions, which keeps the controller closer to the paper than the earlier `target / 2` simplification
 - the controller now follows the paper-shaped control loop more closely: below `Tlow` it applies a plain additive increase, above `Thigh` it applies a multiplicative decrease, and inside the nominal region it uses a smoothed queue-delay gradient to choose between additive increase and multiplicative decrease
+- the high-delay path now also scales its multiplicative decrease by how far delay overshoots `Thigh`, instead of treating every high-delay sample as the same severity
 - the middle-region decrease path is now scaled by a `Tlow`-normalized queue-delay gradient, which is a cleaner CPU-scheduler analogue of TIMELY's normalized RTT-gradient decrease than the earlier fixed backoff shortcut
 - saturated no-op increases or decreases are now ignored instead of being treated like real control updates, so the sampled controller state is less noisy under steady favorable conditions
 - the faster recovery path is now HAI-style in the nominal region instead of an immediate low-delay shortcut: it activates only after several consecutive favorable samples, which is much closer to TIMELY than the previous one-sample shortcut
