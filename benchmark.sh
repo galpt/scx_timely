@@ -22,6 +22,7 @@ RUNS=1
 DROP_CACHES=0
 BOOTSTRAP_PLOTTER=0
 CHECK_DEPS_ONLY=0
+ADAPTIVE_SCOPE=1
 BENCHMARK_CMD="${BENCHMARK_CMD:-}"
 PLOTTER="$SCRIPT_DIR/mini_benchmarker_plot.py"
 PLOTTER_PYTHON="${PLOTTER_PYTHON:-python3}"
@@ -45,6 +46,8 @@ CURRENT_RUNTIME_LOG=""
 CURRENT_SCHEDULER_VERSION=""
 CURRENT_SCHEDULER_NAME=""
 CURRENT_BENCHMARK_PID=""
+CURRENT_BENCHMARK_MAX_TESTS=0
+ADAPTIVE_SCOPE_LIMIT=0
 
 usage() {
     cat <<EOF
@@ -73,6 +76,7 @@ Options:
   --benchmark-cmd PATH          Path to the suite runner
   --bootstrap-plotter           Create a local venv with matplotlib if needed
   --check-deps                  Report benchmark prerequisites and exit
+  --no-adaptive-scope           Always run the full suite for every variant
   -h, --help                    Show this help
 
 Environment overrides:
@@ -117,6 +121,10 @@ while [ $# -gt 0 ]; do
             ;;
         --check-deps)
             CHECK_DEPS_ONLY=1
+            shift
+            ;;
+        --no-adaptive-scope)
+            ADAPTIVE_SCOPE=0
             shift
             ;;
         -h|--help)
@@ -225,6 +233,65 @@ detect_baseline_label() {
     fi
 }
 
+count_completed_benchmarks_from_log() {
+    local log_path="$1"
+    [ -f "$log_path" ] || {
+        printf '%s\n' 0
+        return
+    }
+
+    "$PLOTTER_PYTHON" - "$log_path" "$SUITE" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+suite = sys.argv[2]
+text = path.read_text(encoding="utf-8", errors="replace")
+
+full = [
+    "stress-ng cpu-cache-mem",
+    "y-cruncher pi 1b",
+    "perf sched msg fork thread",
+    "perf memcpy",
+    "namd 92K atoms",
+    "calculating prime numbers",
+    "argon2 hashing",
+    "ffmpeg compilation",
+    "xz compression",
+    "kernel defconfig",
+    "blender render",
+    "x265 encoding",
+]
+
+if suite == "cachyos-quick":
+    names = full[:5]
+else:
+    names = full
+
+count = 0
+for name in names:
+    if re.search(rf'^(?:\*\s+)?{re.escape(name)}:\s+[0-9]', text, re.M):
+        count += 1
+    else:
+        break
+
+print(count)
+PY
+}
+
+update_adaptive_scope_limit() {
+    local completed="$1"
+    case "$completed" in
+        ''|*[!0-9]*) completed=0 ;;
+    esac
+    [ "$completed" -gt 0 ] || return 0
+
+    if [ "$ADAPTIVE_SCOPE_LIMIT" -eq 0 ] || [ "$completed" -lt "$ADAPTIVE_SCOPE_LIMIT" ]; then
+        ADAPTIVE_SCOPE_LIMIT="$completed"
+    fi
+}
+
 detect_power_profile() {
     local profile=""
     if command -v powerprofilesctl >/dev/null 2>&1; then
@@ -288,10 +355,8 @@ service_is_active() {
 
 patch_local_mini_script() {
     [ -f "$MINI_LOCAL_SCRIPT" ] || return 0
-    if grep -q 'MB_TIME_BIN=' "$MINI_LOCAL_SCRIPT"; then
-        return 0
-    fi
-    sed -i '/^TMP="\/tmp"$/a\
+    if ! grep -q 'MB_TIME_BIN=' "$MINI_LOCAL_SCRIPT"; then
+        sed -i '/^TMP="\/tmp"$/a\
 MB_TIME_BIN=""\
 for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do\
 \tif [ -x "$candidate" ]; then\
@@ -301,7 +366,90 @@ for candidate in /usr/bin/time /bin/time /usr/local/bin/time /opt/homebrew/bin/g
 done\
 [[ -z "$MB_TIME_BIN" ]] && echo "GNU time executable not found. Please install the time package." && exit 3\
 ' "$MINI_LOCAL_SCRIPT"
-    sed -i 's#/usr/bin/time #$MB_TIME_BIN #g' "$MINI_LOCAL_SCRIPT"
+        sed -i 's#/usr/bin/time #$MB_TIME_BIN #g' "$MINI_LOCAL_SCRIPT"
+    fi
+
+    if grep -q 'MB_MAX_TESTS=' "$MINI_LOCAL_SCRIPT"; then
+        return 0
+    fi
+
+    "$PLOTTER_PYTHON" - "$MINI_LOCAL_SCRIPT" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+
+old_vars = """VER="v2.3"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.18.16"
+YCVER="v0.8.7.9547"
+FFMVER="8.0.1"
+"""
+
+new_vars = """VER="v2.3"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.18.16"
+YCVER="v0.8.7.9547"
+FFMVER="8.0.1"
+MB_MAX_TESTS="${MB_MAX_TESTS:-12}"
+"""
+
+old_run = """# run
+NRTESTS=12
+declare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+checkfiles && checksys && header || exit 8
+runstress && sleep 2 || exit 8
+runyc && sleep 2 || exit 8
+runperf_sch && sleep 2 || exit 8
+runperf_mem && sleep 2 || exit 8
+runnamd && sleep 2 || exit 8
+runprime && sleep 2 || exit 8
+runargon && sleep 2 || exit 8
+runffm && sleep 2 || exit 8
+runxz && sleep 2 || exit 8
+runkern && sleep 2 || exit 8
+runblend && sleep 2 || exit 8
+runx265 && sleep 2 || exit 8
+"""
+
+new_run = """# run
+NRTESTS=$MB_MAX_TESTS
+[[ $NRTESTS -lt 1 ]] && NRTESTS=1
+[[ $NRTESTS -gt 12 ]] && NRTESTS=12
+declare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+checkfiles && checksys && header || exit 8
+[[ $NRTESTS -ge 1 ]] && runstress && sleep 2 || [[ $NRTESTS -lt 1 ]] || exit 8
+[[ $NRTESTS -ge 2 ]] && runyc && sleep 2 || [[ $NRTESTS -lt 2 ]] || exit 8
+[[ $NRTESTS -ge 3 ]] && runperf_sch && sleep 2 || [[ $NRTESTS -lt 3 ]] || exit 8
+[[ $NRTESTS -ge 4 ]] && runperf_mem && sleep 2 || [[ $NRTESTS -lt 4 ]] || exit 8
+[[ $NRTESTS -ge 5 ]] && runnamd && sleep 2 || [[ $NRTESTS -lt 5 ]] || exit 8
+[[ $NRTESTS -ge 6 ]] && runprime && sleep 2 || [[ $NRTESTS -lt 6 ]] || exit 8
+[[ $NRTESTS -ge 7 ]] && runargon && sleep 2 || [[ $NRTESTS -lt 7 ]] || exit 8
+[[ $NRTESTS -ge 8 ]] && runffm && sleep 2 || [[ $NRTESTS -lt 8 ]] || exit 8
+[[ $NRTESTS -ge 9 ]] && runxz && sleep 2 || [[ $NRTESTS -lt 9 ]] || exit 8
+[[ $NRTESTS -ge 10 ]] && runkern && sleep 2 || [[ $NRTESTS -lt 10 ]] || exit 8
+[[ $NRTESTS -ge 11 ]] && runblend && sleep 2 || [[ $NRTESTS -lt 11 ]] || exit 8
+[[ $NRTESTS -ge 12 ]] && runx265 && sleep 2 || [[ $NRTESTS -lt 12 ]] || exit 8
+"""
+
+if old_vars not in text:
+    raise SystemExit(f"Could not find variable block in {path}")
+if old_run not in text:
+    raise SystemExit(f"Could not find run block in {path}")
+
+text = text.replace(old_vars, new_vars, 1)
+text = text.replace(old_run, new_run, 1)
+path.write_text(text, encoding="utf-8")
+PY
 }
 
 patch_local_cachyos_script() {
@@ -374,7 +522,7 @@ path.write_text(text.replace(old, new, 1), encoding="utf-8")
 PY
     fi
 
-    if grep -q 'CB_QUICK_MODE=' "$CACHYOS_LOCAL_SCRIPT"; then
+    if grep -q 'CB_QUICK_MODE=' "$CACHYOS_LOCAL_SCRIPT" && grep -q 'CB_MAX_TESTS=' "$CACHYOS_LOCAL_SCRIPT"; then
         return 0
     fi
 
@@ -396,6 +544,19 @@ COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2)
 KERNVER="6.14.7"
 """
 
+old_vars_quick = """VER="v2.2"
+FFMPEGVER="7.0.1"
+YCRUNCHER_VER="0.8.6.9545"
+CDATE=$(date +%F-%H%M)
+RAMSIZE=$(awk '/MemTotal/{print int($2 / 1000)}' /proc/meminfo)
+CPUCORES=$(nproc)
+CPUFREQ=$(awk '{print $1 / 1000000}' /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq)
+COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2))")"
+KERNVER="6.14.7"
+CB_QUICK_MODE="${CB_QUICK_MODE:-0}"
+CB_QUICK_LABEL="${CB_QUICK_LABEL:-CachyOS Quick RT Bench}"
+"""
+
 new_vars = """VER="v2.2"
 FFMPEGVER="7.0.1"
 YCRUNCHER_VER="0.8.6.9545"
@@ -407,6 +568,7 @@ COEFF="$(python -c "print(round((($CPUCORES + 1) / 2 * $CPUFREQ / 2) ** (1/3),2)
 KERNVER="6.14.7"
 CB_QUICK_MODE="${CB_QUICK_MODE:-0}"
 CB_QUICK_LABEL="${CB_QUICK_LABEL:-CachyOS Quick RT Bench}"
+CB_MAX_TESTS="${CB_MAX_TESTS:-0}"
 """
 
 old_run = """# run
@@ -427,7 +589,7 @@ runblend && sleep 2 || exit 8
 runx265 && sleep 2 || exit 8
 """
 
-new_run = """# run
+old_run_quick = """# run
 if [[ "$CB_QUICK_MODE" = "1" ]]; then
 \techo -e "\\n${TB}${CB_QUICK_LABEL}:${TN} running the early RT-pressure-heavy subset only.\\n"
 \tNRTESTS=5
@@ -453,13 +615,60 @@ if [[ "$CB_QUICK_MODE" != "1" ]]; then
 fi
 """
 
-if old_vars not in text:
-    raise SystemExit(f"Could not find benchmark variable block in {path}")
-if old_run not in text:
-    raise SystemExit(f"Could not find benchmark run block in {path}")
+new_run = """# run
+if [[ "$CB_QUICK_MODE" = "1" ]]; then
+\techo -e "\\n${TB}${CB_QUICK_LABEL}:${TN} running the early RT-pressure-heavy subset only.\\n"
+\tNRTESTS=5
+\tdeclare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.95)
+else
+\tNRTESTS=12
+\tdeclare -a WEIGHTS=(0.9 0.9 0.85 0.85 0.85 0.85 0.8 0.95 0.95 1 0.95 1)
+fi
+if [[ "$CB_MAX_TESTS" -gt 0 && "$CB_MAX_TESTS" -lt "$NRTESTS" ]]; then
+\tNRTESTS=$CB_MAX_TESTS
+fi
+checkfiles && checksys && header || exit 8
+[[ $NRTESTS -ge 1 ]] && runstress && sleep 2 || [[ $NRTESTS -lt 1 ]] || exit 8
+[[ $NRTESTS -ge 2 ]] && runyc && sleep 2 || [[ $NRTESTS -lt 2 ]] || exit 8
+[[ $NRTESTS -ge 3 ]] && runperf_sch && sleep 2 || [[ $NRTESTS -lt 3 ]] || exit 8
+[[ $NRTESTS -ge 4 ]] && runperf_mem && sleep 2 || [[ $NRTESTS -lt 4 ]] || exit 8
+[[ $NRTESTS -ge 5 ]] && runnamd && sleep 2 || [[ $NRTESTS -lt 5 ]] || exit 8
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 6 ]]; then
+\trunprime && sleep 2 || exit 8
+fi
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 7 ]]; then
+\trunargon && sleep 2 || exit 8
+fi
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 8 ]]; then
+\trunffm && sleep 2 || exit 8
+fi
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 9 ]]; then
+\trunxz && sleep 2 || exit 8
+fi
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 10 ]]; then
+\trunkern && sleep 2 || exit 8
+fi
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 11 ]]; then
+\trunblend && sleep 2 || exit 8
+fi
+if [[ "$CB_QUICK_MODE" != "1" && $NRTESTS -ge 12 ]]; then
+\trunx265 && sleep 2 || exit 8
+fi
+"""
 
-text = text.replace(old_vars, new_vars, 1)
-text = text.replace(old_run, new_run, 1)
+if old_vars in text:
+    text = text.replace(old_vars, new_vars, 1)
+elif old_vars_quick in text:
+    text = text.replace(old_vars_quick, new_vars, 1)
+else:
+    raise SystemExit(f"Could not find benchmark variable block in {path}")
+
+if old_run in text:
+    text = text.replace(old_run, new_run, 1)
+elif old_run_quick in text:
+    text = text.replace(old_run_quick, new_run, 1)
+else:
+    raise SystemExit(f"Could not find benchmark run block in {path}")
 path.write_text(text, encoding="utf-8")
 PY
 }
@@ -955,22 +1164,29 @@ run_benchmark_command() {
     local run_name="$1"
     local cache_answer="$2"
     local console_log="$3"
+    local max_tests="$4"
 
     BENCHMARK_CMD_PATH="$BENCHMARK_CMD" \
     WORKDIR_PATH="$WORKDIR" \
     CACHE_ANSWER="$cache_answer" \
     RUN_NAME="$run_name" \
     CONSOLE_LOG="$console_log" \
+    MAX_TESTS="$max_tests" \
     SUITE_NAME="$SUITE" \
     BENCHMARK_LABEL_ENV="$BENCHMARK_LABEL" \
     setsid bash -lc '
         set -o pipefail
-        if [ "$SUITE_NAME" = "cachyos-quick" ]; then
+        if [ "$SUITE_NAME" = "mini" ]; then
             printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
-                env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL_ENV" \
+                env MB_MAX_TESTS="${MAX_TESTS:-0}" \
+                "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
+        elif [ "$SUITE_NAME" = "cachyos-quick" ]; then
+            printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
+                env CB_QUICK_MODE=1 CB_QUICK_LABEL="$BENCHMARK_LABEL_ENV" CB_MAX_TESTS="${MAX_TESTS:-0}" \
                 "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
         else
             printf "%s\n%s\n" "$CACHE_ANSWER" "$RUN_NAME" | \
+                env CB_MAX_TESTS="${MAX_TESTS:-0}" \
                 "$BENCHMARK_CMD_PATH" "$WORKDIR_PATH" | tee "$CONSOLE_LOG"
         fi
     ' &
@@ -1045,7 +1261,7 @@ run_one_benchmark() {
     say "Running ${BENCHMARK_LABEL}: ${label} (run ${run_index}/${RUNS})"
     mkdir -p "$WORKDIR"
     console_log="$RESULTS_DIR/console/${run_name}.out"
-    run_benchmark_command "$run_name" "$cache_answer" "$console_log"
+    run_benchmark_command "$run_name" "$cache_answer" "$console_log" "$CURRENT_BENCHMARK_MAX_TESTS"
     bench_pid="$CURRENT_BENCHMARK_PID"
     wait_for_benchmark_or_scheduler_exit "$bench_pid" "$runtime_log" "$CURRENT_SCHEDULER_NAME" "$label"
 
@@ -1075,6 +1291,16 @@ run_one_benchmark() {
         fi
     fi
     tag_log_copy "$raw_log" "$tagged_log" "$label" "$variant_slug" "$POWER_PROFILE" "$scheduler_status" "$scheduler_issue" "$CURRENT_SCHEDULER_VERSION" "$scheduler_metrics" "$(uname -sr)"
+
+    if [ "$ADAPTIVE_SCOPE" -eq 1 ] && [ "$CURRENT_SCHEDULER_NAME" = "timely" ]; then
+        local completed_tests
+        completed_tests=$(count_completed_benchmarks_from_log "$raw_log")
+        update_adaptive_scope_limit "$completed_tests"
+        if [ "$ADAPTIVE_SCOPE_LIMIT" -gt 0 ]; then
+            say "Adaptive benchmark ceiling learned from Timely: ${ADAPTIVE_SCOPE_LIMIT} completed test(s)"
+        fi
+    fi
+
     cleanup_benchmark_artifacts
     ok "Saved $(basename "$raw_log")"
 }
@@ -1115,6 +1341,12 @@ run_variant() {
             exit 1
             ;;
     esac
+
+    CURRENT_BENCHMARK_MAX_TESTS=0
+    if [ "$ADAPTIVE_SCOPE" -eq 1 ] && [ "$ADAPTIVE_SCOPE_LIMIT" -gt 0 ] && [ "$action" != "timely" ]; then
+        CURRENT_BENCHMARK_MAX_TESTS="$ADAPTIVE_SCOPE_LIMIT"
+        say "Limiting ${label} to ${CURRENT_BENCHMARK_MAX_TESTS} test(s) based on Timely's completed scope"
+    fi
 
     for run_index in $(seq 1 "$RUNS"); do
         run_one_benchmark "$variant_slug" "$label" "$run_index" "$CURRENT_RUNTIME_LOG"
@@ -1162,11 +1394,16 @@ main() {
     say "Timely benchmark mode    : $MODE"
     say "Runs per variant         : $RUNS"
     say "Power profile            : $POWER_PROFILE"
+    if [ "$ADAPTIVE_SCOPE" -eq 1 ]; then
+        say "Adaptive scope           : enabled (Timely-first ceiling)"
+    else
+        say "Adaptive scope           : disabled"
+    fi
 
-    run_variant "baseline" "$BASELINE_LABEL" baseline
-    run_variant "cake" "cake" cake
-    run_variant "bpfland" "bpfland" bpfland
     run_variant "timely-${MODE}" "Timely (${MODE})" timely
+    run_variant "bpfland" "bpfland" bpfland
+    run_variant "cake" "cake" cake
+    run_variant "baseline" "$BASELINE_LABEL" baseline
 
     "$PLOTTER_PYTHON" "$PLOTTER" "$RESULTS_DIR/tagged" \
         --title "${BENCHMARK_LABEL} Comparison (${MODE} mode)"

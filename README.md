@@ -109,6 +109,7 @@ Useful helper commands:
 > [!NOTE]
 > - all reported benchmark values are elapsed time in seconds, so lower is better
 > - all suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
+> - the benchmark runner now starts with `scx_timely`, learns how many benchmark items Timely actually completed, and can cap the later variants to that same scope so repetitive tuning runs do not waste time on tests that will never show up in the comparison
 > - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
 > - `cachyos-quick` reuses the same cached assets and only runs the early RT-pressure-heavy subset, so it is useful as a faster screening loop before spending time on the full `cachyos` suite
 > - scheduler versions and scheduler exits are recorded in tagged logs, CSV output, and chart labels, because completed timing output alone does not guarantee that a `sched_ext` run stayed clean
