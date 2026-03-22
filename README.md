@@ -136,6 +136,7 @@ Useful helper commands:
 - `./benchmark.sh --suite mini --check-deps`
 - `./benchmark.sh --suite cachyos --check-deps`
 - `./benchmark.sh --suite cachyos-quick --check-deps`
+- `./kill_benchmark.sh`
 - `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
 - `./install_benchmark_deps.sh --remove-workdir`
 
@@ -148,6 +149,7 @@ Useful helper commands:
 > - `cachyos-quick` reuses the same cached assets and only runs the early RT-pressure-heavy subset, so it is useful as a faster screening loop before spending time on the full `cachyos` suite
 > - scheduler versions and scheduler exits are recorded in tagged logs, CSV output, and chart labels, because completed timing output alone does not guarantee that a `sched_ext` run stayed clean
 > - scheduler-backed runs now stop as soon as the scheduler exits and immediately summarize the partial session instead of waiting for the rest of the benchmark script to finish
+> - if a benchmark session gets stuck or you want to abort it cleanly, `./kill_benchmark.sh` reads the runner's state file and tears down the benchmark wrapper, helper tree, and leftover benchmark schedulers
 > - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
 > - the benchmark runner now prunes empty leftover directories from the benchmark workdir and `benchmark-results/`, while keeping the final folders that still contain logs, charts, or CSV summaries
 > - benchmark metadata parsing now handles empty fields correctly, so baseline CSV/chart labels don't get shifted by blank scheduler-version or metrics lines

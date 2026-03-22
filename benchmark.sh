@@ -29,6 +29,8 @@ PLOTTER_PYTHON="${PLOTTER_PYTHON:-python3}"
 TIMELY_EXTRA_ARGS=()
 RESULTS_DIR=""
 WORKDIR=""
+STATE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/scx_timely"
+STATE_FILE="$STATE_DIR/benchmark-running.env"
 
 MINI_LOCAL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/scx_timely/mini-benchmarker"
 MINI_LOCAL_SCRIPT="$MINI_LOCAL_DIR/mini-benchmarker.sh"
@@ -49,6 +51,25 @@ CURRENT_SCHEDULER_NAME=""
 CURRENT_BENCHMARK_PID=""
 CURRENT_BENCHMARK_MAX_TESTS=0
 ADAPTIVE_SCOPE_LIMIT=0
+
+write_runtime_state() {
+    mkdir -p "$STATE_DIR"
+    {
+        printf 'PARENT_PID=%q\n' "$$"
+        printf 'BENCHMARK_PID=%q\n' "${CURRENT_BENCHMARK_PID:-}"
+        printf 'SCHEDULER_NAME=%q\n' "${CURRENT_SCHEDULER_NAME:-}"
+        printf 'SCHEDULER_VERSION=%q\n' "${CURRENT_SCHEDULER_VERSION:-}"
+        printf 'RUNTIME_LOG=%q\n' "${CURRENT_RUNTIME_LOG:-}"
+        printf 'RESULTS_DIR=%q\n' "${RESULTS_DIR:-}"
+        printf 'WORKDIR=%q\n' "${WORKDIR:-}"
+        printf 'SCRIPT_DIR=%q\n' "$SCRIPT_DIR"
+        printf 'UPDATED_AT=%q\n' "$(date -Iseconds)"
+    } > "$STATE_FILE"
+}
+
+clear_runtime_state() {
+    rm -f "$STATE_FILE"
+}
 
 usage() {
     cat <<EOF
@@ -1023,6 +1044,7 @@ start_cake_manual() {
     local runtime_log="$RESULTS_DIR/console/scx_cake.log"
     say "Starting scx_cake"
     CURRENT_RUNTIME_LOG="$runtime_log"
+    write_runtime_state
     run_privileged env RUST_LOG=info "$CAKE_BIN" >"$runtime_log" 2>&1 &
     wait_for_scheduler_state cake active || {
         err "scx_cake did not become active."
@@ -1034,6 +1056,7 @@ start_bpfland_manual() {
     local runtime_log="$RESULTS_DIR/console/scx_bpfland.log"
     say "Starting scx_bpfland"
     CURRENT_RUNTIME_LOG="$runtime_log"
+    write_runtime_state
     run_privileged env RUST_LOG=info "$BPFLAND_BIN" >"$runtime_log" 2>&1 &
     wait_for_scheduler_state bpfland active || {
         err "scx_bpfland did not become active."
@@ -1045,6 +1068,7 @@ start_timely_manual() {
     local runtime_log="$RESULTS_DIR/console/scx_timely-${MODE}.log"
     say "Starting scx_timely in ${MODE} mode"
     CURRENT_RUNTIME_LOG="$runtime_log"
+    write_runtime_state
     run_privileged env RUST_LOG=info "$TIMELY_BIN" --mode "$MODE" "${TIMELY_EXTRA_ARGS[@]}" >"$runtime_log" 2>&1 &
     wait_for_scheduler_state timely active || {
         err "scx_timely did not become active."
@@ -1055,6 +1079,7 @@ start_timely_manual() {
 cleanup_exit() {
     local status="$1"
     trap - EXIT
+    clear_runtime_state
     stop_sudo_keepalive
     if [ "$RESTORE_NEEDED" -eq 1 ]; then
         restore_initial_state || true
@@ -1216,6 +1241,7 @@ run_benchmark_command() {
         fi
     ' &
     CURRENT_BENCHMARK_PID="$!"
+    write_runtime_state
 }
 
 wait_for_benchmark_or_scheduler_exit() {
@@ -1250,6 +1276,8 @@ wait_for_benchmark_or_scheduler_exit() {
     wait "$bench_pid"
     local bench_rc=$?
     set -e
+    CURRENT_BENCHMARK_PID=""
+    write_runtime_state
 
     if [ "$stopped_early" -eq 1 ]; then
         return 0
@@ -1342,23 +1370,27 @@ run_variant() {
             CURRENT_RUNTIME_LOG=""
             CURRENT_SCHEDULER_VERSION=""
             CURRENT_SCHEDULER_NAME=""
+            write_runtime_state
             ;;
         cake)
             stop_all_schedulers
             CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$CAKE_BIN")
             CURRENT_SCHEDULER_NAME="cake"
+            write_runtime_state
             start_cake_manual
             ;;
         bpfland)
             stop_all_schedulers
             CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$BPFLAND_BIN")
             CURRENT_SCHEDULER_NAME="bpfland"
+            write_runtime_state
             start_bpfland_manual
             ;;
         timely)
             stop_all_schedulers
             CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$TIMELY_BIN")
             CURRENT_SCHEDULER_NAME="timely"
+            write_runtime_state
             start_timely_manual
             ;;
         *)
@@ -1383,6 +1415,7 @@ main() {
     ensure_results_path_writable
     mkdir -p "$WORKDIR" "$RESULTS_DIR/raw" "$RESULTS_DIR/tagged" "$RESULTS_DIR/console"
     trap 'cleanup_exit $?' EXIT
+    write_runtime_state
 
     find_benchmark_runner
 
