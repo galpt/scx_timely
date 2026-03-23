@@ -1,189 +1,114 @@
 # scx_timely
 
-`scx_timely` is a `sched_ext` CPU scheduler bootstrapped from upstream [`scx_bpfland`](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_bpfland).
+`scx_timely` is an experimental `sched_ext` CPU scheduler built on top of upstream [`scx_bpfland`](https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_bpfland).
 
-The goal is to keep the base scheduler small and stable while adapting the TIMELY paper's feedback-driven low-latency / high-throughput idea to CPU scheduling in measured steps, without overcomplicating the scheduler's fast path.
+Its goal is simple: adapt the TIMELY paper's delay-driven feedback idea to CPU scheduling while keeping the inherited `bpfland` base small, understandable, and close to upstream behavior.
 
 > [!IMPORTANT]
-> - this repository is still in an experimental stage
-> - the current code should be read as a measured `bpfland`-based starting point with a growing TIMELY-inspired control layer, not as a complete TIMELY implementation
-> - until the next published `scx_*` crate release catches up, this repo patches the upstream `sched-ext/scx` workspace at a fixed revision to stay aligned with the latest inherited `bpfland` base behavior
-> - future README claims should stay tied to measured behavior and local validation
-> - the install path is intentionally source-first for now; release-download automation can come later after the scheduler behavior settles
+> This project is still experimental. It should be read as a `bpfland`-based TIMELY adaptation, not as a production-ready scheduler or a literal networking-side port of the paper.
 
-## Current Status
+## Features
 
-- this repository starts from a renamed `scx_bpfland` scaffold, and scheduling behavior is still intentionally close to upstream `scx_bpfland`
-- the current tree temporarily tracks a newer upstream `sched-ext/scx` revision for the `scx_*` helper crates so Timely stays aligned with recent `bpfland` base changes such as `SCX_ENQ_IMMED` compatibility support before the next crates.io release lands
-- `desktop`, `powersave`, and `server` modes are available as thin tuning presets over the inherited scheduler knobs
-- a small TIMELY-inspired control layer now measures queue delay, keeps a smoothed delay gradient, and uses explicit low/high-delay regions plus a middle-region update path to recover additively and back off multiplicatively
-- controller updates are now gated on fresh enqueue-to-run delay samples and a small minimum control interval, so Timely does not keep reapplying control decisions too quickly during bursty feedback
-- the current controller constants now live in userspace-owned mode config instead of being hidden as BPF literals, which makes the control loop easier to inspect, tune, and explain
-- those controller constants can now also be overridden directly from the CLI, so controller calibration no longer requires editing source code for every experiment
-- the current controller now also uses a less severe backoff curve and a higher minimum gain floor, so heavy pressure does not collapse slice budget as aggressively as before
-- the built-in mode presets now expose explicit Timely `Tlow` / `Thigh` delay regions, which keeps the controller closer to the paper than the earlier `target / 2` simplification
-- the controller now follows the paper-shaped control loop more closely: below `Tlow` it applies a plain additive increase, above `Thigh` it applies a multiplicative decrease, and inside the nominal region it uses a smoothed queue-delay gradient to choose between additive increase and multiplicative decrease
-- the high-delay path now also scales its multiplicative decrease by how far delay overshoots `Thigh`, instead of treating every high-delay sample as the same severity
-- the middle-region decrease path is now scaled by a `Tlow`-normalized queue-delay gradient, which is a cleaner CPU-scheduler analogue of TIMELY's normalized RTT-gradient decrease than the earlier fixed backoff shortcut
-- saturated no-op increases or decreases are now ignored instead of being treated like real control updates, so the sampled controller state is less noisy under steady favorable conditions
-- the faster recovery path is now HAI-style in the nominal region instead of an immediate low-delay shortcut: it activates only after several consecutive favorable samples, which is much closer to TIMELY than the previous one-sample shortcut
-- scheduler metrics now also show when the controller is being rate-limited by that interval and when updates are repeatedly landing at the Timely gain floor or ceiling
-- a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
-- recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
-
-## TIMELY Mapping
-
-The controller is now much closer to the TIMELY paper's structure, but it is still a CPU-scheduler adaptation, not a literal unchanged network-side port.
-
-Current mapping:
-
-- TIMELY RTT signal -> per-task queue delay
-- TIMELY send-rate control -> per-task slice gain
-- `Tlow` / `Thigh` regions -> explicit per-mode low/high queue-delay thresholds
-- additive increase -> gain increases below `Tlow` and in favorable nominal-region samples
-- multiplicative decrease -> gain decreases above `Thigh` and on clearly positive nominal-region gradients
-- HAI-style increase -> gated faster additive recovery after several consecutive favorable nominal-region samples
-- sampled controller updates -> gain updates only after fresh enqueue-to-run delay observations and a minimum control interval
-
-What is still adapted rather than copied verbatim:
-
-- the control variable is slice gain instead of network send rate
-- the signal is scheduler queue delay instead of RTT
-- the fixed-point math and guardrails are chosen to make sense for `sched_ext`, not to mirror datacenter transport equations word-for-word
-
-## Design Direction
-
-The intended direction is:
-
-- preserve a BPF-first fast path and stay close to upstream `bpfland`'s base liveness model
-- add a narrow control layer inspired by the TIMELY paper
-- expose profile tuning such as `desktop`, `powersave`, and `server` as parameter changes rather than separate scheduler architectures
-
-## Where Timely Fits
-
-`scx_timely` is not trying to replace every `sched_ext` scheduler with one universal winner. The better way to read it is as a scheduler for people who specifically want a feedback-driven latency / throughput tradeoff instead of a more fixed scheduling policy.
-
-Compared with other schedulers commonly listed in the [CachyOS `sched-ext` guide](https://wiki.cachyos.org/configuration/sched-ext/), Timely currently fits best as:
-
-- an experimental choice for people who want a `bpfland`-based scheduler with a more explicit feedback controller
-- a scheduler that tries to react to measured queue pressure, instead of relying only on static tiers, fixed profiles, or simpler direct-dispatch behavior
-- a useful option for benchmarking and controller experimentation when you want to see how delay-targeted tuning changes scheduler behavior
-
-It is not yet the right scheduler to recommend as a general “best for everyone” pick. If you want a more established upstream scheduler today, `scx_cake`, `scx_bpfland`, `scx_lavd`, and the other schedulers documented by CachyOS are still the safer public recommendations.
-
-## Use Cases
-
-If you just want the short version, `scx_timely` is aimed at people who want one scheduler that tries to react to changing pressure instead of staying locked into one fixed behavior.
-
-It may be a reasonable fit if you care about:
-
-- gaming, where you want a system that tries to stay responsive when bursts of work show up
-- low-latency creative work such as audio editing, audio monitoring, or live content work, where responsiveness matters but background throughput still matters too
-- mixed desktop workloads, such as coding while a browser, music player, chat apps, and local builds are all active
-- source builds, media encoding, or other heavier work where you still want the machine to stay usable instead of feeling completely bogged down
-
-The intended idea is not “always maximize throughput” or “always minimize latency.” It is to let a feedback controller react to measured queue pressure and try to balance the two.
-
-That said, the current tree is still experimental. If you need the safest choice today, the more established upstream schedulers are still the better default recommendation.
+- `bpfland`-based scheduler with a narrower TIMELY-inspired control layer
+- explicit Timely-style `Tlow` / `Thigh` delay regions
+- queue-delay and delay-gradient feedback
+- additive increase, multiplicative decrease, and HAI-style faster recovery
+- built-in `desktop`, `powersave`, and `server` presets
+- CLI overrides for the main Timely controller knobs
+- local benchmark helpers for `mini`, `cachyos`, and `cachyos-quick`
 
 ## Modes
 
-- `desktop` keeps the baseline interactive profile and enables preferred idle scanning
-- the current built-in desktop tuning remains the most validated Timely profile so far
-- `powersave` narrows the primary domain toward efficient cores and enables conservative throttling
-- `powersave` now uses a wider Timely delay region together with a slower control interval, a smaller additive gain step, and a more conservative HAI gate than `desktop`, plus more conservative `bpfland`-style policy knobs around primary domain, idle resume latency, throttling, and cpufreq
-- `server` favors wider placement and enables more aggressive per-CPU / kthread-friendly tuning
-- `server` keeps a tighter delay region than powersave, but changes the surrounding policy knobs toward locality and per-CPU friendliness
-- all three modes set explicit Timely `Tlow` / `Thigh` thresholds for the controller
-- advanced users can override the Timely controller knobs from the CLI without changing the source tree:
-  - `--delay-target-us` (legacy shorthand for `Thigh`)
-  - `--timely-tlow-us`
-  - `--timely-thigh-us`
-  - `--timely-gain-min-fp`
-  - `--timely-gain-step-fp`
-  - `--timely-hai-threshold`
-  - `--timely-hai-multiplier`
-  - `--timely-backoff-high-fp`
-  - `--timely-backoff-gradient-fp`
-  - `--timely-gradient-margin-us`
-  - `--timely-control-interval-us`
-- delay gradient is used as an early warning signal, so multiplicative backoff can start before queue delay fully blows past `Thigh`
-- when delay is below `Tlow`, the controller now follows TIMELY's plain additive increase behavior instead of trying to over-interpret the gradient
-- when delay sits between `Tlow` and `Thigh`, the controller uses the smoothed queue-delay gradient as the main signal: neutral or favorable movement allows additive increase, clearly positive movement triggers a multiplicative decrease scaled by the normalized gradient, and HAI only activates after several consecutive favorable samples in that nominal region
-- gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design
-- a small minimum control interval also prevents the controller from retuning too quickly when new delay samples arrive in a tight burst
+- `desktop`: the most validated profile so far and the main interactive preset
+- `powersave`: more conservative behavior around delay growth, throttling, and recovery
+- `server`: tuned around wider placement and more server-oriented policy knobs
 
-## Current Mode Status
+All three modes use the same controller structure, but with different default thresholds and policy settings.
 
-- `desktop`: the most tuned and most repeatedly checked profile so far
-- `powersave`: now uses calmer additive defaults and a more conservative HAI gate; good enough for now, but still experimental
-- `server`: first two `mini` runs already landed in a relatively healthy range, so it currently looks less problematic than `powersave`
+## Use Cases
 
-None of these mode summaries should be read as “production-ready” claims. They are just the current local state of the profile tuning work.
+`scx_timely` is aimed at people who want a scheduler that reacts to measured queue pressure instead of staying locked into one fixed policy.
 
-## Install
+Typical use cases:
 
-`scx_timely` currently supports source-based installation via the local helper scripts:
+- gaming and mixed desktop workloads
+- low-latency creative work such as audio editing or monitoring
+- development machines doing local builds while staying responsive
+- heavier background work where interactive feel still matters
+
+If you want the safest public recommendation today, the more established upstream schedulers are still the better default pick.
+
+## TIMELY Mapping
+
+This project follows TIMELY's control ideas, but adapts them to CPU scheduling:
+
+- RTT -> task queue delay
+- send-rate control -> per-task slice gain
+- `Tlow` / `Thigh` -> low/high queue-delay thresholds
+- additive increase / multiplicative decrease -> slice-gain updates
+- HAI -> faster recovery after several consecutive favorable samples
+
+So the design is TIMELY-shaped, but not a word-for-word transport-layer port.
+
+## Build and Install
+
+Build and install from source:
 
 ```bash
 sudo sh install.sh --build-from-source --force
 ```
 
-To remove it again:
+Remove it again:
 
 ```bash
 sudo sh uninstall.sh --purge --force
 ```
 
+Until the next published `scx_*` crate release catches up, this repo temporarily patches the upstream `sched-ext/scx` workspace at a fixed revision so `scx_timely` stays aligned with newer inherited `bpfland` behavior.
+
 ## Benchmark Helpers
 
-For local scheduler comparisons, this repo ships one umbrella benchmark runner with three suites:
+This repo ships local benchmark helpers for comparing:
 
-- `mini`: torvic9's Mini Benchmarker
-- `cachyos`: the heavier CachyOS benchmark wrapper, but with local caching and cleaner script patching
-- `cachyos-quick`: a reduced CachyOS RT-pressure screening run that keeps the same early heavy section which has historically exposed scheduler exits faster than the full run
+- baseline Linux scheduler
+- `scx_cake`
+- `scx_bpfland`
+- `scx_timely`
 
-The default `mini_benchmarker.sh` entrypoint is kept as a compatibility shortcut for the `mini` suite.
+Available suites:
+
+- `mini`
+- `cachyos`
+- `cachyos-quick`
+
+Examples:
 
 ```bash
 ./benchmark.sh --suite mini --mode desktop
+./benchmark.sh --suite mini --mode powersave
+./benchmark.sh --suite mini --mode server
 ```
 
-If you want to tune Timely during a benchmark run without editing the source tree, pass extra scheduler flags through the runner:
-
-```bash
-./benchmark.sh --suite mini --mode desktop \
-  --timely-arg --timely-control-interval-us \
-  --timely-arg 750 \
-  --timely-arg --timely-gain-step-fp \
-  --timely-arg 16
-```
-
-Useful helper commands:
+Useful helpers:
 
 - `./benchmark.sh --suite mini --check-deps`
 - `./benchmark.sh --suite cachyos --check-deps`
 - `./benchmark.sh --suite cachyos-quick --check-deps`
 - `./kill_benchmark.sh`
-- `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
-- `./install_benchmark_deps.sh --remove-workdir`
 
-> [!NOTE]
-> - all reported benchmark values are elapsed time in seconds, so lower is better
-> - all suites compare your baseline kernel scheduler against `scx_cake`, `scx_bpfland`, and `scx_timely`
-> - the benchmark runner now starts with `scx_timely`, learns how many benchmark items Timely actually completed, and can cap the later variants to that same scope so repetitive tuning runs do not waste time on tests that will never show up in the comparison
-> - when adaptive scope has not learned any ceiling yet, the runner now leaves the helper suites fully uncapped instead of accidentally forcing them down to a smaller test count
-> - the CachyOS suite reuses a persistent workdir so repeated runs do not re-download the large benchmark assets every time
-> - `cachyos-quick` reuses the same cached assets and only runs the early RT-pressure-heavy subset, so it is useful as a faster screening loop before spending time on the full `cachyos` suite
-> - scheduler versions and scheduler exits are recorded in tagged logs, CSV output, and chart labels, because completed timing output alone does not guarantee that a `sched_ext` run stayed clean
-> - scheduler-backed runs now stop as soon as the scheduler exits and immediately summarize the partial session instead of waiting for the rest of the benchmark script to finish
-> - if a benchmark session gets stuck or you want to abort it cleanly, `./kill_benchmark.sh` reads the runner's state file and tears down the benchmark wrapper, helper tree, and leftover benchmark schedulers
-> - tagged logs now also keep the final scheduler metrics snapshot when the runtime emits one, which makes it easier to see whether Timely's delay controls, recovery path, or `cpu_release()` rescue path actually fired
-> - the benchmark runner now prunes empty leftover directories from the benchmark workdir and `benchmark-results/`, while keeping the final folders that still contain logs, charts, or CSV summaries
-> - benchmark metadata parsing now handles empty fields correctly, so baseline CSV/chart labels don't get shifted by blank scheduler-version or metrics lines
-> - baseline runs now also wait for `sched_ext` to report no active scheduler in `root/ops`, so they do not accidentally inherit a stale scheduler name from the previous variant
-> - generated charts and CSV summaries are written under `benchmark-results/`
-> - this is local-machine benchmarking, not a universal scheduler claim
+The benchmark runner records scheduler version, exit status, and final metrics in tagged logs and generated CSV/chart output. It can also stop a run early when the scheduler has already exited, which saves time during repeated tuning.
+
+## Current Status
+
+- `desktop`: sane enough for now and currently the best-checked preset
+- `powersave`: calmer and usable enough for now, but still experimental
+- `server`: first repeated `mini` runs landed in a healthy range and currently look the least problematic
+
+These are not production-readiness claims. They are just the current local state of the profile tuning work.
+
+## License
+
+`scx_timely` is licensed under `GPL-2.0-only`.
 
 ## Inspirations and References
 
