@@ -61,15 +61,15 @@ The design tries to stay honest about that tradeoff:
 If you want the quickest review path, these are the main entry points:
 
 - controller state and the main Timely-shaped `task_slice()` logic:
-  - [`src/bpf/main.bpf.c`](../src/bpf/main.bpf.c#L744)
+  - [`src/bpf/main.bpf.c#L744`](../src/bpf/main.bpf.c#L744) (around lines 744-891)
 - explicit `Tlow` / `Thigh`, additive increase, multiplicative decrease, HAI, and gradient handling:
-  - [`src/bpf/main.bpf.c`](../src/bpf/main.bpf.c#L769)
+  - [`src/bpf/main.bpf.c#L769`](../src/bpf/main.bpf.c#L769) (around lines 769-889)
 - queue-delay and gradient measurement:
-  - [`src/bpf/main.bpf.c`](../src/bpf/main.bpf.c#L1241)
+  - [`src/bpf/main.bpf.c#L1241`](../src/bpf/main.bpf.c#L1241) (around lines 1241-1247)
 - mode defaults and CLI-exposed Timely knobs:
-  - [`src/main.rs`](../src/main.rs#L105)
-  - [`src/main.rs`](../src/main.rs#L314)
+  - [`src/main.rs#L105`](../src/main.rs#L105) (around lines 105-237)
+  - [`src/main.rs#L314`](../src/main.rs#L314) (around lines 314-382)
 - userspace -> BPF rodata wiring for the Timely parameters:
-  - [`src/main.rs`](../src/main.rs#L616)
+  - [`src/main.rs#L616`](../src/main.rs#L616) (around lines 616-627)
 - userspace metrics and the short summary counters used by the local benchmark wrappers:
-  - [`src/stats.rs`](../src/stats.rs#L28)
+  - [`src/stats.rs#L28`](../src/stats.rs#L28) (around lines 28-43)
