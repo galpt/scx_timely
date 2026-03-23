@@ -55,3 +55,21 @@ The design tries to stay honest about that tradeoff:
 - keep the `bpfland` base recognizable
 - keep the Timely logic explicit
 - avoid turning the scheduler into a large unrelated experiment
+
+## Where To Look In Code
+
+If you want the quickest review path, these are the main entry points:
+
+- controller state and the main Timely-shaped `task_slice()` logic:
+  - [`src/bpf/main.bpf.c`](../src/bpf/main.bpf.c#L744)
+- explicit `Tlow` / `Thigh`, additive increase, multiplicative decrease, HAI, and gradient handling:
+  - [`src/bpf/main.bpf.c`](../src/bpf/main.bpf.c#L769)
+- queue-delay and gradient measurement:
+  - [`src/bpf/main.bpf.c`](../src/bpf/main.bpf.c#L1241)
+- mode defaults and CLI-exposed Timely knobs:
+  - [`src/main.rs`](../src/main.rs#L105)
+  - [`src/main.rs`](../src/main.rs#L314)
+- userspace -> BPF rodata wiring for the Timely parameters:
+  - [`src/main.rs`](../src/main.rs#L616)
+- userspace metrics and the short summary counters used by the local benchmark wrappers:
+  - [`src/stats.rs`](../src/stats.rs#L28)
