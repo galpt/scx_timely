@@ -1,0 +1,5 @@
+label,power_profile,scheduler_version,scheduler_status,scheduler_issue,scheduler_metrics,runs,benchmark,mean_seconds
+Linux 6.19.9-1-cachyos,power-saver,,clean,,,1,stress-ng cpu-cache-mem,27.65
+bpfland,power-saver,1.1.0-gc505008f x86_64-unknown-linux-gnu,clean,,,1,stress-ng cpu-cache-mem,24.61
+cake,power-saver,1.1.0,clean,,,1,stress-ng cpu-cache-mem,29.11
+Timely (powersave),power-saver,0.14.3 x86_64-unknown-linux-gnu,exited,runnable task stall (watchdog failed to check in for 5.001s),tasks r=0/16 dispatch k=20003 d=464437 s=69672 q=7176 g=1636 rec=1369 mid=2521 hai=4 rl=7911 min=93 max=1960 rel=23175,1,stress-ng cpu-cache-mem,34.68
