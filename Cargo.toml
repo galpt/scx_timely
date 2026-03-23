@@ -1,6 +1,6 @@
 [package]
 name = "scx_timely"
-version = "0.14.7"
+version = "1.1.0"
 authors = ["scx_timely contributors"]
 edition = "2021"
 description = "A TIMELY-inspired sched_ext scheduler bootstrapped from scx_bpfland"
