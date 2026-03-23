@@ -114,14 +114,26 @@ enable_scx_service() {
 }
 
 show_active_scheduler() {
-    if [ -r /sys/kernel/sched_ext/root/ops ]; then
-        _active=$(cat /sys/kernel/sched_ext/root/ops 2>/dev/null || true)
-        if [ -n "$_active" ]; then
-            log_ok "Current sched_ext scheduler: ${_active}"
-            return
-        fi
+    if [ -n "$DRY_RUN" ]; then
+        log_info "(dry-run) Would wait for an active sched_ext scheduler"
+        return 0
     fi
-    log_warn "No active sched_ext scheduler reported in /sys/kernel/sched_ext/root/ops"
+
+    _attempt=0
+    while [ "$_attempt" -lt 20 ]; do
+        if [ -r /sys/kernel/sched_ext/root/ops ]; then
+            _active=$(cat /sys/kernel/sched_ext/root/ops 2>/dev/null || true)
+            if [ -n "$_active" ]; then
+                log_ok "Current sched_ext scheduler: ${_active}"
+                return 0
+            fi
+        fi
+        _attempt=$((_attempt + 1))
+        sleep 0.25
+    done
+
+    log_warn "No active sched_ext scheduler reported in /sys/kernel/sched_ext/root/ops after restart"
+    return 1
 }
 
 main() {
@@ -134,7 +146,7 @@ main() {
 
     configure_scx_defaults
     enable_scx_service
-    show_active_scheduler
+    show_active_scheduler || true
 
     log_step "Done"
     log_ok "scx_timely is configured as the primary scheduler for scx.service"
