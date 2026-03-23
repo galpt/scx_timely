@@ -4,6 +4,11 @@ This branch only stores benchmark artifacts that were linked from public issue d
 
 It is intentionally kept separate from the source branch so artifact links stay stable without duplicating the full repository contents.
 
+> [!NOTE]
+> The local benchmark wrapper starts with `scx_timely` first. If Timely exits mid-run, the wrapper keeps the last useful completed benchmark items, summarizes that partial session, and then limits `bpfland`, `cake`, and baseline to the same scope so the comparison stays aligned instead of wasting time on items that Timely never reached.
+>
+> In these snapshots, `exited` should not be read as proof of a Timely-only failure class. `scx_timely` is built on a `bpfland`-derived base, and the same broader sched_ext watchdog / stall issue has also shown up with `bpfland` and `cake`. The practical interpretation here is that once Timely hits that class of exit, other sched_ext schedulers may hit it too under the same kind of pressure.
+
 ## Latest Mode Snapshots
 
 ### Desktop
