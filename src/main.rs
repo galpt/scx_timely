@@ -307,8 +307,8 @@ fn cpus_to_cpumask(cpus: &Vec<usize>) -> String {
 /// scx_timely: a BPF-first sched_ext scheduler bootstrapped from scx_bpfland.
 ///
 /// The current tree intentionally stays close to upstream bpfland behavior so
-/// the standalone repo has a small, buildable, reviewer-safe base before any
-/// TIMELY-specific control logic is introduced.
+/// the standalone repo keeps a small, buildable, reviewer-safe base while the
+/// TIMELY-inspired control layer is adapted on top.
 #[derive(Debug, Parser)]
 struct Opts {
     /// Select a high-level scheduler mode.
@@ -357,7 +357,7 @@ struct Opts {
     #[clap(long, default_value = "0")]
     timely_gain_step_fp: u32,
 
-    /// Consecutive favorable low-delay samples required before HAI activates (0 = mode default).
+    /// Consecutive favorable nominal-region samples required before HAI activates (0 = mode default).
     #[clap(long, default_value = "0")]
     timely_hai_threshold: u32,
 

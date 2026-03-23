@@ -94,7 +94,15 @@ Useful helpers:
 - `./benchmark.sh --suite mini --check-deps`
 - `./benchmark.sh --suite cachyos --check-deps`
 - `./benchmark.sh --suite cachyos-quick --check-deps`
+- `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
+- `./install_benchmark_deps.sh --remove-workdir`
 - `./kill_benchmark.sh`
+
+If the benchmark helpers do not work out of the box, fetch the local scripts and plotting dependencies first:
+
+```bash
+./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter
+```
 
 The benchmark runner records scheduler version, exit status, and final metrics in tagged logs and generated CSV/chart output. It can also stop a run early when the scheduler has already exited, which saves time during repeated tuning.
 
