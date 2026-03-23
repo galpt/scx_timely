@@ -50,6 +50,8 @@ This project follows TIMELY's control ideas, but adapts them to CPU scheduling:
 
 So the design is TIMELY-shaped, but not a word-for-word transport-layer port.
 
+For a short note on what changed relative to `scx_bpfland`, see [docs/design-vs-bpfland.md](docs/design-vs-bpfland.md).
+
 ## Build and Install
 
 Build and install from source:
