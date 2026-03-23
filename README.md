@@ -124,6 +124,8 @@ If the benchmark helpers do not work out of the box, fetch the local scripts and
 
 The benchmark runner records scheduler version, exit status, and final metrics in tagged logs and generated CSV/chart output. It can also stop a run early when the scheduler has already exited, which saves time during repeated tuning.
 
+For saved benchmark snapshots and a short note on how to interpret the adaptive scope and `exited` status, see the [`benchmark-artifacts`](https://github.com/galpt/scx_timely/tree/benchmark-artifacts) branch.
+
 ## Current Status
 
 - `desktop`: sane enough for now and currently the best-checked preset
