@@ -31,6 +31,26 @@ The goal is to keep the base scheduler small and stable while adapting the TIMEL
 - a best-effort `cpu_release()` rescue path now re-enqueues tasks stranded in the local DSQ when a higher-priority class temporarily steals a CPU from `sched_ext`
 - recent local benchmark runs, including the CachyOS-derived suites, still show watchdog exits under desktop RT pressure, so the current tree should be treated as an experimental scheduler and measurement harness rather than a solved production scheduler
 
+## TIMELY Mapping
+
+The controller is now much closer to the TIMELY paper's structure, but it is still a CPU-scheduler adaptation, not a literal unchanged network-side port.
+
+Current mapping:
+
+- TIMELY RTT signal -> per-task queue delay
+- TIMELY send-rate control -> per-task slice gain
+- `Tlow` / `Thigh` regions -> explicit per-mode low/high queue-delay thresholds
+- additive increase -> gain increases below `Tlow` and in favorable nominal-region samples
+- multiplicative decrease -> gain decreases above `Thigh` and on clearly positive nominal-region gradients
+- HAI-style increase -> gated faster additive recovery after several consecutive favorable nominal-region samples
+- sampled controller updates -> gain updates only after fresh enqueue-to-run delay observations and a minimum control interval
+
+What is still adapted rather than copied verbatim:
+
+- the control variable is slice gain instead of network send rate
+- the signal is scheduler queue delay instead of RTT
+- the fixed-point math and guardrails are chosen to make sense for `sched_ext`, not to mirror datacenter transport equations word-for-word
+
 ## Design Direction
 
 The intended direction is:
@@ -92,6 +112,14 @@ That said, the current tree is still experimental. If you need the safest choice
 - when delay sits between `Tlow` and `Thigh`, the controller uses the smoothed queue-delay gradient as the main signal: neutral or favorable movement allows additive increase, clearly positive movement triggers a multiplicative decrease scaled by the normalized gradient, and HAI only activates after several consecutive favorable samples in that nominal region
 - gain updates happen once per fresh queue-delay observation instead of on every subsequent dispatch, which keeps the control loop closer to a sampled-feedback design
 - a small minimum control interval also prevents the controller from retuning too quickly when new delay samples arrive in a tight burst
+
+## Current Mode Status
+
+- `desktop`: the most tuned and most repeatedly checked profile so far
+- `powersave`: now uses calmer additive defaults and a more conservative HAI gate; good enough for now, but still experimental
+- `server`: first two `mini` runs already landed in a relatively healthy range, so it currently looks less problematic than `powersave`
+
+None of these mode summaries should be read as “production-ready” claims. They are just the current local state of the profile tuning work.
 
 ## Install
 
