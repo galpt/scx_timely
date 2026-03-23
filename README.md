@@ -114,6 +114,8 @@ If you want a quick check of whether `scx_timely` is installed, configured in `/
 ./status_scx_timely.sh
 ```
 
+For a fuller configuration check, including direct inspection of `/etc/default/scx`, run it with `sudo`.
+
 If the benchmark helpers do not work out of the box, fetch the local scripts and plotting dependencies first:
 
 ```bash
