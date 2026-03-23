@@ -58,6 +58,8 @@ Build and install from source:
 sudo sh install.sh --build-from-source --force
 ```
 
+`install.sh` already writes `/etc/default/scx`, enables `scx.service`, and makes `scx_timely` persist across reboots.
+
 Remove it again:
 
 ```bash
@@ -91,12 +93,26 @@ Examples:
 
 Useful helpers:
 
+- `sudo sh enable_scx_timely.sh --flags "--mode desktop"`
+- `./status_scx_timely.sh`
 - `./benchmark.sh --suite mini --check-deps`
 - `./benchmark.sh --suite cachyos --check-deps`
 - `./benchmark.sh --suite cachyos-quick --check-deps`
 - `./install_benchmark_deps.sh --mini-benchmarker --cachyos-benchmarker --plotter`
 - `./install_benchmark_deps.sh --remove-workdir`
 - `./kill_benchmark.sh`
+
+If you want to re-assert `scx_timely` as the configured boot-time scheduler after changing things manually:
+
+```bash
+sudo sh enable_scx_timely.sh --flags "--mode desktop"
+```
+
+If you want a quick check of whether `scx_timely` is installed, configured in `/etc/default/scx`, and currently active:
+
+```bash
+./status_scx_timely.sh
+```
 
 If the benchmark helpers do not work out of the box, fetch the local scripts and plotting dependencies first:
 
