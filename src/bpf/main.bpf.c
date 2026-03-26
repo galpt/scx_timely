@@ -932,13 +932,30 @@ static inline bool is_expand_mode_active(void)
  */
 static bool should_expand_skip_locality(const struct task_ctx *tctx)
 {
-	/* Expand mode always skips locality fallback */
-	if (is_expand_mode_active())
-		return true;
+	/*
+	 * In expand mode, skip locality fallback for most tasks to encourage
+	 * better load balancing. However, we still allow wake-heavy tasks
+	 * (typically interactive/audio) to use locality fallback even in
+	 * expand mode, since they benefit from cache locality.
+	 */
+	if (is_expand_mode_active()) {
+		/*
+		 * Check if this is a wake-heavy task.
+		 * Wake-heavy tasks have high wakeup_freq and benefit from staying
+		 * on the same CPU for cache locality, even under pressure.
+		 */
+		if (tctx) {
+			bool wake_heavy = tctx->wakeup_freq >= MAX(v2_locality_wakeup_freq, 1);
+			if (wake_heavy)
+				return false;  // Allow locality fallback for wake-heavy tasks
+		}
+		return true;  // Skip locality fallback for non-wake-heavy tasks
+	}
 
 	/*
-	 * Also skip locality fallback if in task-level pressure mode and
-	 * the primary domain is showing signs of saturation.
+	 * In contract mode (low pressure), also skip locality fallback if
+	 * in task-level pressure mode and the primary domain is showing signs
+	 * of saturation.
 	 */
 	if (tctx && tctx->v2_pressure_mode) {
 		u32 primary_busy = READ_ONCE(v2_primary_domain_busy);
