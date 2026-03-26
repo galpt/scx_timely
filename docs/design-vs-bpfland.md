@@ -37,21 +37,21 @@ v2 adds **pressure-aware load-balancing** via an expand/contract mode.
 
 ### New v2 Functions (BPF)
 
-[`src/bpf/main.bpf.c#L829-928`](../src/bpf/main.bpf.c#L829-928)
-- Lines 829-865: `update_global_pressure()` - updates global pressure EMA and expand/contract mode
-- Lines 903-905: `is_expand_mode_active()` - returns true if in expand mode
-- Lines 913-928: `should_expand_skip_locality()` - core policy: returns true to skip locality fallback
+[`src/bpf/main.bpf.c#L829`](../src/bpf/main.bpf.c#L829)
+- Line 829: `update_global_pressure()` - updates global pressure EMA and expand/contract mode
+- Line 921: `is_expand_mode_active()` - returns true if in expand mode
+- Line 933: `should_expand_skip_locality()` - core policy: returns true to skip locality fallback
 
 ### Modified Enqueue Logic (BPF)
 
-[`src/bpf/main.bpf.c#L1485-1520`](../src/bpf/main.bpf.c#L1485-1520)
-- Lines 1488-1489: Changed from `!pressure_mode_active` to `!should_expand_skip_locality(tctx)`
-- Lines 1514-1519: Track expand vs contract mode dispatches
+[`src/bpf/main.bpf.c#L1526`](../src/bpf/main.bpf.c#L1526)
+- Line 1526: Changed from `!pressure_mode_active` to `!should_expand_skip_locality(tctx)`
+- Lines 1535-1539: Track expand vs contract mode dispatches
 
 ### Global Pressure Update Called (BPF)
 
-[`src/bpf/main.bpf.c#L1721`](../src/bpf/main.bpf.c#L1721)
-- Line 1721: `update_global_pressure(tctx)` called from `timely_running()`
+[`src/bpf/main.bpf.c#L1758`](../src/bpf/main.bpf.c#L1758)
+- Line 1758: `update_global_pressure(tctx)` called from `timely_running()`
 
 ### New v2 Rust Config (main.rs)
 
