@@ -15,6 +15,7 @@ v1 TIMELY gives excellent slice-gain control via delay feedback. But under susta
 - System is saturated (sustained delay pressure)
 - Skip locality fallback, dispatch to shared queues
 - Spread work to reduce queue delay
+- **Exception**: Wake-heavy tasks (audio/interactive) still get locality fallback to preserve cache warmth
 
 ## Implementation
 
@@ -39,9 +40,12 @@ if (v2_expand_mode && v2_global_pressure < v2ContractThreshold)
 if (!should_expand_skip_locality(tctx))
     fallback_kind = locality_fallback_kind(...);
 
-// should_expand_skip_locality() returns true when:
-// - v2_expand_mode is active, OR
+// should_expand_skip_locality() returns true (skip locality) when:
+// - v2_expand_mode is active AND task is NOT wake-heavy, OR
 // - Task is in pressure mode AND primary domain > 50% saturated
+//
+// Wake-heavy tasks (high wakeup_freq, e.g., audio/interactive) always
+// get locality fallback to preserve cache locality.
 ```
 
 ## Thresholds

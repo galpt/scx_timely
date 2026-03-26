@@ -14,6 +14,7 @@ The scheduler now switches between two modes based on system-wide pressure:
 ### Expand Mode (Balance-First)
 - **When**: Sustained delay pressure (system above expand threshold)
 - **Behavior**: Skip locality fallback, dispatch directly to shared queues for better load distribution
+- **Exception**: Wake-heavy tasks (audio/interactive) preserve locality even in expand mode to prevent audio crackling
 - **Use case**: Higher saturation, heavy multi-threaded work
 
 ### Hysteresis
