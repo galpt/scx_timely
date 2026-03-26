@@ -55,49 +55,49 @@ v2 adds **pressure-aware load-balancing** via an expand/contract mode.
 
 ### New v2 Rust Config (main.rs)
 
-[`src/main.rs#L73-78`](../src/main.rs#L73-78)
-- Lines 73-78: New DEFAULT_V2_EXPAND_THRESHOLD and DEFAULT_V2_CONTRACT_THRESHOLD constants
+[`src/main.rs#L75-76`](../src/main.rs#L75-76)
+- Lines 75-76: New DEFAULT_V2_EXPAND_THRESHOLD and DEFAULT_V2_CONTRACT_THRESHOLD constants
 
-[`src/main.rs#L84-90`](../src/main.rs#L84-90)
-- Lines 84-90: New fields in EffectiveConfig struct
+[`src/main.rs#L100-111`](../src/main.rs#L100-111)
+- Lines 100-111: New v2 fields in EffectiveConfig struct (v2_locality_fallback through v2_contract_threshold)
 
-[`src/main.rs#L104-108`](../src/main.rs#L104-108)
-- Lines 104-108: New fields in Desktop mode defaults
+[`src/main.rs#L141-151`](../src/main.rs#L141-151)
+- Lines 141-151: New v2 fields in Desktop mode defaults (v2_locality_fallback through v2_contract_threshold)
 
-[`src/main.rs#L186-191`](../src/main.rs#L186-191)
-- Lines 186-191: New fields in Powersave mode defaults
+[`src/main.rs#L186-187`](../src/main.rs#L186-187)
+- Lines 186-187: v2_expand_threshold and v2_contract_threshold in Powersave mode defaults
 
-[`src/main.rs#L222-227`](../src/main.rs#L222-227)
-- Lines 222-227: New fields in Server mode defaults
+[`src/main.rs#L222-223`](../src/main.rs#L222-223)
+- Lines 222-223: v2_expand_threshold and v2_contract_threshold in Server mode defaults
 
-[`src/main.rs#L293-300`](../src/main.rs#L293-300)
-- Lines 293-300: CLI override logic for new thresholds
+[`src/main.rs#L300-305`](../src/main.rs#L300-305)
+- Lines 300-305: CLI override logic for new thresholds
 
-[`src/main.rs#L495-510`](../src/main.rs#L495-510)
-- Lines 495-510: New CLI options --v2-expand-threshold and --v2-contract-threshold
+[`src/main.rs#L505-518`](../src/main.rs#L505-518)
+- Lines 505-518: New CLI options --v2-expand-threshold and --v2-contract-threshold
 
-[`src/main.rs#L778-781`](../src/main.rs#L778-781)
-- Lines 778-781: rodata wiring for v2ExpandThreshold and v2ContractThreshold
+[`src/main.rs#L784-785`](../src/main.rs#L784-785)
+- Lines 784-785: rodata wiring for v2ExpandThreshold and v2ContractThreshold
 
-[`src/main.rs#L705-728`](../src/main.rs#L705-728)
-- Lines 705-728: Log output includes new v2 thresholds
+[`src/main.rs#L707-729`](../src/main.rs#L707-729)
+- Lines 707-729: Log output includes new v2 thresholds
 
-[`src/main.rs#L1070-1074`](../src/main.rs#L1070-1074)
-- Lines 1070-1074: Metrics include nr_v2_expand_mode_dispatches and nr_v2_contract_mode_dispatches
+[`src/main.rs#L1069-1071`](../src/main.rs#L1069-1071)
+- Lines 1069-1071: Metrics include nr_v2_expand_mode_dispatches and nr_v2_contract_mode_dispatches
 
 ### New v2 Metrics (stats.rs)
 
 [`src/stats.rs#L113-117`](../src/stats.rs#L113-117)
 - Lines 113-117: New metric definitions
 
-[`src/stats.rs#L121`](../src/stats.rs#L121)
-- Line 121: v2exp and v2con added to summary_line format
+[`src/stats.rs#L125`](../src/stats.rs#L125)
+- Line 125: v2exp and v2con added to summary_line format
 
-[`src/stats.rs#L170`](../src/stats.rs#L170)
-- Line 170: v2exp and v2con added to format output
+[`src/stats.rs#L176`](../src/stats.rs#L176)
+- Line 176: v2exp and v2con added to format output
 
-[`src/stats.rs#L295-298`](../src/stats.rs#L295-298)
-- Lines 295-298: v2exp and v2con added to delta calculation
+[`src/stats.rs#L294-298`](../src/stats.rs#L294-298)
+- Lines 294-298: v2exp and v2con added to delta calculation
 
 ## v2 Policy Summary
 
@@ -112,6 +112,8 @@ v2 adds **pressure-aware load-balancing** via an expand/contract mode.
 - Work spreads to reduce queue delay
 
 ### Hysteresis
-- Enter expand at v2ExpandThreshold (75% desktop default)
-- Exit expand at v2ContractThreshold (50% desktop default)
-- Prevents oscillation around boundary
+All modes (desktop, powersave, server) benefit from v2 expand/contract with mode-specific thresholds:
+- **Desktop**: Enter expand at 75%, exit at 50%
+- **Powersave**: Enter expand at 65%, exit at 40%
+- **Server**: Enter expand at 80%, exit at 55%
+- Prevents oscillation around the boundary
