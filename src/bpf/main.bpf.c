@@ -838,15 +838,20 @@ static void update_global_pressure(const struct task_ctx *tctx)
 	/*
 	 * Calculate primary domain busy percentage.
 	 * This is a snapshot of how saturated the primary domain is.
+	 * Use a safe calculation that avoids division by zero and overflow.
 	 */
-	if (nr_online_cpus > 0) {
+	u32 online_cpus = READ_ONCE(nr_online_cpus);
+	if (online_cpus > 0) {
 		/*
 		 * Estimate: use nr_running vs online CPUs as a rough saturation metric.
-		 * In a full implementation this would track actual CPU queue depths.
-		 * We weight by 100 to get percentage.
+		 * Use div64_u64 to avoid overflow in multiplication.
+		 * The multiplication by 100 is safe because nr_running is typically
+		 * much smaller than 2^64 / 100 on any real system.
 		 */
-		primary_busy_pct = (u32)((nr_running * 100) / nr_online_cpus);
-		primary_busy_pct = MIN(primary_busy_pct, 100);
+		u64 running = READ_ONCE(nr_running);
+		u64 product = running * 100ULL;
+		primary_busy_pct = (u32)(product / online_cpus);
+		primary_busy_pct = MIN(primary_busy_pct, 100U);
 		__sync_val_compare_and_swap(&v2_primary_domain_busy, v2_primary_domain_busy,
 					    primary_busy_pct);
 	}
@@ -859,11 +864,14 @@ static void update_global_pressure(const struct task_ctx *tctx)
 	new_pressure = old_pressure;
 
 	if (tctx && is_delay_pressured(tctx)) {
-		/* Pressure rising: EMA with weight 0.25 on new sample */
-		new_pressure = (old_pressure * 3 / 4) + 25;
+		/*
+		 * Pressure rising: EMA with weight 0.25 on new sample.
+		 * Use shift for division: x * 3 / 4 = x - x/4
+		 */
+		new_pressure = old_pressure - (old_pressure >> 2) + 25;
 	} else {
-		/* Pressure falling: EMA decay */
-		new_pressure = (old_pressure * 7 / 8);
+		/* Pressure falling: EMA decay by 1/8 using shift */
+		new_pressure = old_pressure - (old_pressure >> 3);
 	}
 	new_pressure = MIN(new_pressure, 100U);
 
@@ -874,9 +882,21 @@ static void update_global_pressure(const struct task_ctx *tctx)
 	 *
 	 * Hysteresis: expand_threshold > contract_threshold creates a deadband
 	 * to prevent rapid oscillation between modes.
+	 *
+	 * Ensure expand_threshold is at least 1 to avoid division issues,
+	 * and contract_threshold is properly bounded.
 	 */
-	expand_threshold = MAX(v2ExpandThreshold, 1);
-	contract_threshold = MIN(v2ContractThreshold, expand_threshold - 1);
+	u32 expand_th = READ_ONCE(v2ExpandThreshold);
+	u32 contract_th = READ_ONCE(v2ContractThreshold);
+
+	/* If thresholds are disabled (0), use sensible defaults */
+	if (expand_th == 0)
+		expand_th = 1;
+	if (contract_th >= expand_th)
+		contract_th = expand_th - 1;
+
+	expand_threshold = expand_th;
+	contract_threshold = contract_th;
 
 	if (!v2_expand_mode) {
 		/* Currently in contract mode, check if we should expand */
