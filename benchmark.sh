@@ -1041,7 +1041,11 @@ stop_all_schedulers() {
 }
 
 start_cake_manual() {
+    local run_name="${1:-}"
     local runtime_log="$RESULTS_DIR/console/scx_cake.log"
+    if [ -n "$run_name" ]; then
+        runtime_log="$RESULTS_DIR/console/scx_cake_${run_name}.log"
+    fi
     say "Starting scx_cake"
     CURRENT_RUNTIME_LOG="$runtime_log"
     write_runtime_state
@@ -1053,7 +1057,11 @@ start_cake_manual() {
 }
 
 start_bpfland_manual() {
+    local run_name="${1:-}"
     local runtime_log="$RESULTS_DIR/console/scx_bpfland.log"
+    if [ -n "$run_name" ]; then
+        runtime_log="$RESULTS_DIR/console/scx_bpfland_${run_name}.log"
+    fi
     say "Starting scx_bpfland"
     CURRENT_RUNTIME_LOG="$runtime_log"
     write_runtime_state
@@ -1065,7 +1073,11 @@ start_bpfland_manual() {
 }
 
 start_timely_manual() {
+    local run_name="${1:-}"
     local runtime_log="$RESULTS_DIR/console/scx_timely-${MODE}.log"
+    if [ -n "$run_name" ]; then
+        runtime_log="$RESULTS_DIR/console/scx_timely-${MODE}_${run_name}.log"
+    fi
     say "Starting scx_timely in ${MODE} mode"
     CURRENT_RUNTIME_LOG="$runtime_log"
     write_runtime_state
@@ -1364,41 +1376,6 @@ run_variant() {
     local action="$3"
     local run_index
 
-    case "$action" in
-        baseline)
-            stop_all_schedulers
-            CURRENT_RUNTIME_LOG=""
-            CURRENT_SCHEDULER_VERSION=""
-            CURRENT_SCHEDULER_NAME=""
-            write_runtime_state
-            ;;
-        cake)
-            stop_all_schedulers
-            CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$CAKE_BIN")
-            CURRENT_SCHEDULER_NAME="cake"
-            write_runtime_state
-            start_cake_manual
-            ;;
-        bpfland)
-            stop_all_schedulers
-            CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$BPFLAND_BIN")
-            CURRENT_SCHEDULER_NAME="bpfland"
-            write_runtime_state
-            start_bpfland_manual
-            ;;
-        timely)
-            stop_all_schedulers
-            CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$TIMELY_BIN")
-            CURRENT_SCHEDULER_NAME="timely"
-            write_runtime_state
-            start_timely_manual
-            ;;
-        *)
-            err "Unsupported run action: $action"
-            exit 1
-            ;;
-    esac
-
     CURRENT_BENCHMARK_MAX_TESTS=0
     if [ "$ADAPTIVE_SCOPE" -eq 1 ] && [ "$ADAPTIVE_SCOPE_LIMIT" -gt 0 ] && [ "$action" != "timely" ]; then
         CURRENT_BENCHMARK_MAX_TESTS="$ADAPTIVE_SCOPE_LIMIT"
@@ -1406,6 +1383,44 @@ run_variant() {
     fi
 
     for run_index in $(seq 1 "$RUNS"); do
+        local run_name
+        run_name="${variant_slug}_run$(printf '%02d' "$run_index")"
+
+        case "$action" in
+            baseline)
+                stop_all_schedulers
+                CURRENT_RUNTIME_LOG=""
+                CURRENT_SCHEDULER_VERSION=""
+                CURRENT_SCHEDULER_NAME=""
+                write_runtime_state
+                ;;
+            cake)
+                stop_all_schedulers
+                CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$CAKE_BIN")
+                CURRENT_SCHEDULER_NAME="cake"
+                write_runtime_state
+                start_cake_manual "$run_name"
+                ;;
+            bpfland)
+                stop_all_schedulers
+                CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$BPFLAND_BIN")
+                CURRENT_SCHEDULER_NAME="bpfland"
+                write_runtime_state
+                start_bpfland_manual "$run_name"
+                ;;
+            timely)
+                stop_all_schedulers
+                CURRENT_SCHEDULER_VERSION=$(detect_binary_version "$TIMELY_BIN")
+                CURRENT_SCHEDULER_NAME="timely"
+                write_runtime_state
+                start_timely_manual "$run_name"
+                ;;
+            *)
+                err "Unsupported run action: $action"
+                exit 1
+                ;;
+        esac
+
         run_one_benchmark "$variant_slug" "$label" "$run_index" "$CURRENT_RUNTIME_LOG"
     done
 }
