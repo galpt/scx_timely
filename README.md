@@ -33,6 +33,6 @@ All modes (`desktop`, `powersave`, `server`) now benefit from v2 expand/contract
 ## Inspirations and References
 
 1. `sched-ext` maintainers. *scx_bpfland* [Software]. https://github.com/sched-ext/scx/tree/main/scheds/rust/scx_bpfland
-2. Mittal, R., Lam, V. T., Dukkipati, N., et al. (2015). *TIMELY: RTT-based congestion control for the datacenter.* https://research.google.com/pubs/timely-rtt-based-congestion-control-for-the-datacenter/
-3. Kabbani, A., et al. (2020). *Swift: Delay is Simple and Effective for Congestion Control in the Datacenter.* https://research.google.com/pubs/swift-delay-is-simple-and-effective-for-congestion-control-in-the-datacenter/
+2. Mittal, R., Lam, V. T., Dukkipati, N., et al. (2015). *TIMELY: RTT-based congestion control for the datacenter.* https://research.google/pubs/timely-rtt-based-congestion-control-for-the-datacenter/
+3. Kabbani, A., et al. (2020). *Swift: Delay is Simple and Effective for Congestion Control in the Datacenter.* https://research.google/pubs/swift-delay-is-simple-and-effective-for-congestion-control-in-the-datacenter/
 4. Ousterhout, A., et al. (2019). *Shenango: Achieving High CPU Efficiency for Latency-sensitive Datacenter Workloads.* https://www.usenix.org/conference/nsdi19/presentation/ousterhout
